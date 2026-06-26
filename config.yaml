@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────
+# Local Ollama Agent — config.yaml
+# Edit workspace_roots to point to YOUR folders
+# ─────────────────────────────────────────────────────────────────
+
+# ── model ───────────────────────────────────────────────────────
+# Run `ollama list` to confirm the exact tag on your machine.
+# Common variants: gemma4:latest  gemma4:8b  gemma4:8b-instruct-q4_K_M
+model: "gemma4-e4b-64k:latest"
+ollama_url: "http://127.0.0.1:11434"
+
+# Gemma 4 8B supports 131 072 token context.
+# Keep this lower for speed; raise it if you need to read very large files.
+context_window: 65536
+
+# Set to true to let Ollama surface the model's <think>…</think> trace.
+# Only works when debug_level >= 2.
+enable_thinking: true
+
+# ── workspace ────────────────────────────────────────────────────
+# Folders the agent is ALLOWED to read. Add your real paths here.
+workspace_roots:
+  - "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/jpc"
+  - "/Users/nikunjgupta/Downloads/PROJECTS/local-agent"
+  
+
+# All files the agent creates go here (never outside this dir)
+output_dir: "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/output"
+
+# Session audit logs
+log_dir: "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/logs/sessions"
+
+# ── limits ───────────────────────────────────────────────────────
+# Max bytes read from a single file (~64 KB default)
+max_file_bytes: 65536
+
+# Max characters captured from command stdout/stderr
+max_command_output_chars: 4000
+
+# Shell command timeout in seconds
+command_timeout: 30
+
+# ── safety ───────────────────────────────────────────────────────
+# These commands pause and ask you y/N before running
+confirm_commands:
+  - "mv"
+  - "cp"
+  - "pip"
+  - "npm"
+  - "brew"
+  - "chmod"
+  - "chown"
+  - "sudo"
+  - "curl"
+  - "wget"
+  - "rm"
+
+# These are ALWAYS blocked — no confirmation offered
+blocked_commands:
+  - "rm -rf"
+  - "rm -r /"
+  - "dd if="
+  - "mkfs"
+
+# ── debug ────────────────────────────────────────────────────────
+# 0 = final answer only
+# 1 = show tool calls + results        ← recommended default
+# 2 = also show system prompt + thinking tokens
+debug_level: 1
+

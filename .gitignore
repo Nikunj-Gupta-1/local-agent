@@ -1,0 +1,22 @@
+# Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Local Output & Logs
+output/
+logs/
+
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS files
+.DS_Store
+Thumbs.db
