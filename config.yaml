@@ -62,9 +62,26 @@ blocked_commands:
   - "dd if="
   - "mkfs"
 
-# ── debug ────────────────────────────────────────────────────────
+# ── debug ────────────────────────────────────────────────────────────────────
 # 0 = final answer only
 # 1 = show tool calls + results        ← recommended default
 # 2 = also show system prompt + thinking tokens
 debug_level: 1
 
+
+# ── scope assessment (planner pass) ─────────────────────────────────────────
+# Before executing a task, ask the LLM to estimate complexity and decompose it
+# into sub-tasks that each fit within context_budget_pct of the context window.
+scope_assessment:
+  enabled: true
+  context_budget_pct: 0.50   # Each sub-task targets ≤ 50% of context_window
+  max_subtasks: 20            # Safety cap on decomposition
+
+
+# ── satisfaction / completion loop ───────────────────────────────────────────
+# After each sub-task, run a lightweight evaluation pass.
+# If the result is incomplete, retry with a focused prompt.
+satisfaction_loop:
+  enabled: true
+  max_retries: 4              # Per sub-task
+  evaluator_temperature: 0.1  # Keep evaluator deterministic

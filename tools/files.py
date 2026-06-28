@@ -130,4 +130,41 @@ def stat_file(path: str, roots: list[str]) -> dict:
         "modified": datetime.datetime.fromtimestamp(s.st_mtime).isoformat(),
         "is_dir": p.is_dir(),
         "suffix": p.suffix,
+        "total_lines": sum(1 for _ in p.open("rb")) if p.is_file() else None,
+    }
+
+
+def read_file_lines(path: str, roots: list[str], start_line: int, end_line: int) -> dict:
+    """
+    Read a specific inclusive line range from a text file (1-indexed).
+    Use this instead of read_file when you only need part of a large file.
+    This is the preferred tool for inspecting large files to preserve context.
+    """
+    p = _guard(path, roots)
+    if not p.exists():
+        return {"ok": False, "error": f"File does not exist: {path}"}
+    if not p.is_file():
+        return {"ok": False, "error": f"Not a file: {path}"}
+    if start_line < 1:
+        return {"ok": False, "error": "start_line must be >= 1"}
+    if end_line < start_line:
+        return {"ok": False, "error": "end_line must be >= start_line"}
+
+    try:
+        all_lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    except Exception as exc:
+        return {"ok": False, "error": f"Could not read file: {exc}"}
+
+    total_lines = len(all_lines)
+    # Clamp to actual file length
+    end_line = min(end_line, total_lines)
+    selected = all_lines[start_line - 1 : end_line]
+
+    return {
+        "ok": True,
+        "path": str(p),
+        "start_line": start_line,
+        "end_line": end_line,
+        "total_lines": total_lines,
+        "content": "".join(selected),
     }
