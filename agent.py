@@ -547,11 +547,15 @@ The user has made the following request:
 Here is the top-level workspace structure:
 {workspace_snapshot}
 
+Current session context (what has already been done this session — use this to avoid re-doing completed work):
+{scratchpad_context}
+
 Your job:
 1. Estimate the complexity of this task (small / medium / large).
 2. Decompose the task into an ordered list of focused sub-tasks.
    - Each sub-task must be completable in a single focused LLM session using at most 50% of the context window.
    - Each sub-task should be atomic, self-contained, and clearly scoped.
+   - If work is already done (shown in session context above), skip it or acknowledge it — do NOT re-plan it.
    - Aim for 1–{max_subtasks} sub-tasks. Do not over-decompose simple tasks.
 3. Return ONLY a valid JSON object in this exact format (no markdown, no commentary):
 
@@ -591,13 +595,16 @@ def planner_pass(user_request: str) -> list | None:
 
     max_subtasks = scope_cfg.get("max_subtasks", 20)
     snapshot     = snapshot_workspace()
+    # Give the planner awareness of what was already done this session
+    scratchpad_context = read_scratchpad().strip() or "(nothing done yet — this is the first request)"
 
     planner_messages = [
         {"role": "system", "content": "You are a concise task planning assistant. Reply only with the requested JSON."},
         {"role": "user",   "content": PLANNER_PROMPT.format(
-            request           = user_request,
-            workspace_snapshot= snapshot,
-            max_subtasks      = max_subtasks,
+            request            = user_request,
+            workspace_snapshot = snapshot,
+            max_subtasks       = max_subtasks,
+            scratchpad_context = scratchpad_context,
         )},
     ]
 
@@ -636,28 +643,85 @@ def planner_pass(user_request: str) -> list | None:
 
 # ── satisfaction evaluator ────────────────────────────────────────────────────
 EVALUATOR_PROMPT = """\
-You are a strict completion evaluator. Be brief and objective.
+You are a practical completion evaluator. Your job is to judge whether the agent made
+meaningful progress toward completing its assigned sub-task.
 
-The original sub-task was:
-Title: {title}
-Scope: {scope}
+Original user request (the overall goal):
+{original_request}
 
-The agent's last response was:
+Current sub-task:
+  Title: {title}
+  Scope: {scope}
+
+Summary of what the agent did this turn:
 ---
-{last_response}
+{agent_summary}
 ---
 
-Is this sub-task complete and correct?
+Evaluation rules:
+- Judge whether the agent made meaningful progress toward the sub-task and the overall goal.
+- Do NOT fail the agent for approaching the sub-task differently than the title describes,
+  as long as the work advances the goal.
+- If the agent used tools (read files, ran commands, wrote files), treat that as evidence of work.
+- Only mark satisfied=false if the agent clearly did NOTHING useful or produced a wrong result.
+- If the agent explicitly asked the user a clarifying question and got an answer, that counts as progress.
+- Be practical, not pedantic.
 
 Reply with ONLY a valid JSON object (no markdown, no commentary):
 {{
   "satisfied": true | false,
   "reason": "one sentence explaining your decision",
-  "next_action": "what the agent should do next to complete this (leave empty string if satisfied)"
+  "next_action": "what the agent should do next if not satisfied (empty string if satisfied)"
 }}
 """
 
-def satisfaction_check(subtask: dict, last_response: str) -> dict:
+
+def _build_agent_summary(history: list, last_response: str) -> str:
+    """
+    Build a richer summary for the evaluator by including:
+    - The last meaningful assistant text response
+    - Snippets of the most recent tool results
+    """
+    parts = []
+
+    # Include last text response if non-trivial
+    if last_response and last_response != "(no response)" and not last_response.startswith("Agent completed actions via tools:"):
+        parts.append(f"Agent response:\n{last_response[:1500]}")
+
+    # Include recent tool call names + result snippets (last 6 tool messages)
+    tool_summary_lines = []
+    tool_count = 0
+    for msg in reversed(history):
+        if tool_count >= 6:
+            break
+        if msg.get("role") == "tool":
+            try:
+                payload = json.loads(msg["content"])
+                ok_flag = payload.get("ok", True)
+                # Pick a representative value to show
+                snippet = ""
+                for key in ("content", "stdout", "entries", "matches", "path", "error"):
+                    if key in payload:
+                        val = str(payload[key])
+                        snippet = val[:200] + "…" if len(val) > 200 else val
+                        break
+                status = "✓" if ok_flag else "✗"
+                tool_summary_lines.append(f"  {status} tool result: {snippet}")
+                tool_count += 1
+            except Exception:
+                pass
+        elif msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                tool_summary_lines.append(f"  → called: {fn.get('name', '?')}")
+
+    if tool_summary_lines:
+        parts.append("Recent tool activity (most recent first):\n" + "\n".join(reversed(tool_summary_lines)))
+
+    return "\n\n".join(parts) if parts else "(agent produced no output)"
+
+
+def satisfaction_check(subtask: dict, last_response: str, history: list, original_request: str = "") -> dict:
     """
     Evaluate whether the agent's last response satisfactorily completes the sub-task.
     Returns a dict with keys: satisfied (bool), reason (str), next_action (str).
@@ -666,14 +730,16 @@ def satisfaction_check(subtask: dict, last_response: str) -> dict:
     if not loop_cfg.get("enabled", True):
         return {"satisfied": True, "reason": "Satisfaction loop disabled.", "next_action": ""}
 
-    eval_temp = loop_cfg.get("evaluator_temperature", 0.1)
+    eval_temp    = loop_cfg.get("evaluator_temperature", 0.1)
+    agent_summary = _build_agent_summary(history, last_response)
 
     eval_messages = [
-        {"role": "system", "content": "You are a concise completion evaluator. Reply only with the requested JSON."},
+        {"role": "system", "content": "You are a practical completion evaluator. Reply only with the requested JSON."},
         {"role": "user",   "content": EVALUATOR_PROMPT.format(
-            title         = subtask.get("title", "Unknown"),
-            scope         = subtask.get("scope", ""),
-            last_response = last_response[:3000],   # cap to avoid evaluator context issues
+            original_request = original_request or "(not specified)",
+            title            = subtask.get("title", "Unknown"),
+            scope            = subtask.get("scope", ""),
+            agent_summary    = agent_summary[:3000],
         )},
     ]
 
@@ -719,7 +785,7 @@ def mark_subtask_done(subtask: dict):
     write_scratchpad(updated)
 
 # ── run a single sub-task with satisfaction loop ──────────────────────────────
-def run_subtask(subtask: dict, base_history: list) -> tuple[str, list]:
+def run_subtask(subtask: dict, base_history: list, original_request: str = "") -> tuple[str, list]:
     """
     Execute a single sub-task with a retry loop.
     Returns (last_response, updated_history).
@@ -775,7 +841,7 @@ def run_subtask(subtask: dict, base_history: list) -> tuple[str, list]:
             )
 
         # Evaluate satisfaction
-        eval_result = satisfaction_check(subtask, last_response)
+        eval_result = satisfaction_check(subtask, last_response, history, original_request)
         satisfied   = eval_result.get("satisfied", True)
         reason      = eval_result.get("reason", "")
         next_action = eval_result.get("next_action", "")
@@ -849,6 +915,7 @@ def main():
             # No plan (simple task or planner disabled) — run as single turn
             init_scratchpad(user_input, None)
             simple_subtask = {"id": 1, "title": user_input, "scope": user_input, "depends_on": []}
+
             run_subtask(simple_subtask, [])
             alert_user("Agent done", "Task complete.")
             continue
@@ -866,7 +933,7 @@ def main():
             print(f"{mag(f'  Sub-task {idx}/{total}')}: {bold(subtask['title'])}")
             print(dim('─'*55))
 
-            _, history = run_subtask(subtask, history)
+            _, history = run_subtask(subtask, history, original_request=user_input)
             mark_subtask_done(subtask)
 
         # ── Step 4: Done ─────────────────────────────────────────────────────
