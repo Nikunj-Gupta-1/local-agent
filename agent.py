@@ -732,26 +732,47 @@ def run_subtask(subtask: dict, base_history: list) -> tuple[str, list]:
     print(f"\n{mag('◈  Sub-task:')} {bold(title)}")
     print(f"   {dim(scope)}\n")
 
-    # Build a fresh context for this sub-task (system + scratchpad + task description)
+    # Build a fresh context: system prompt + scratchpad only.
+    # run_turn will append the user message; do NOT pre-add it here.
     history = [
         {"role": "system", "content": build_system_with_scratchpad()},
-        {"role": "user",   "content": f"Current sub-task:\n**{title}**\n\n{scope}"},
     ]
 
     last_response = ""
 
     for attempt in range(1, max_retries + 2):  # +1 so we always get at least one attempt
-        history = run_turn(
-            f"Please complete this sub-task: {title}\n{scope}" if attempt == 1
-            else f"The previous attempt was incomplete. {last_response[:200]}… Please continue from where it left off and finish: {title}",
-            history if attempt > 1 else history[:-1],   # first pass: history already has the user msg from init
-        )
+        if attempt == 1:
+            prompt = f"Please complete this sub-task:\n**{title}**\n\n{scope}"
+        else:
+            prompt = (
+                f"The previous attempt was incomplete.\n"
+                f"Reason: {last_response[:300]}\n\n"
+                f"Please continue and finish the sub-task:\n**{title}**\n\n{scope}"
+            )
 
-        # Extract last assistant response
+        history = run_turn(prompt, history)
+
+        # Extract last meaningful assistant response.
+        # Gemma often returns empty content on its final message after tool
+        # calls — skip those and fall back to a tool-call summary.
+        last_response = ""
         for msg in reversed(history):
-            if msg.get("role") == "assistant":
-                last_response = msg.get("content", "")
+            if msg.get("role") == "assistant" and msg.get("content", "").strip():
+                last_response = msg["content"].strip()
                 break
+
+        if not last_response:
+            # Synthesise a summary from the most recent tool calls
+            tool_names = []
+            for msg in reversed(history[-10:]):
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        fn = tc.get("function", {})
+                        tool_names.append(fn.get("name", "unknown"))
+            last_response = (
+                f"Agent completed actions via tools: {', '.join(tool_names)}"
+                if tool_names else "(no response)"
+            )
 
         # Evaluate satisfaction
         eval_result = satisfaction_check(subtask, last_response)
