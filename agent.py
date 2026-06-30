@@ -1,18 +1,4 @@
-#!/usr/bin/env python3
-"""
-agent.py — Local Ollama Filesystem + Shell Agent
-─────────────────────────────────────────────────
-Usage:
-    python agent.py
-
-Requires:
-    pip install requests pyyaml
-
-Ollama must be running:
-    ollama serve   (or open the Ollama.app on Mac)
-"""
-
-import os, sys, json, re, datetime
+import os, sys, json, re, datetime, select
 import yaml, requests
 from pathlib import Path
 
@@ -71,24 +57,220 @@ SYSTEM_PROMPT = (Path(__file__).parent / "prompts" / "system.txt").read_text()
 # ── scratchpad ────────────────────────────────────────────────────────────────
 SCRATCHPAD_NAME = "scratchpad.md"
 
-def scratchpad_path() -> Path:
-    return Path(CFG["output_dir"]) / SCRATCHPAD_NAME
+class ScratchpadManager:
+    def __init__(self, output_dir: Path):
+        self.path = output_dir / SCRATCHPAD_NAME
+        self.goal = ""
+        self.plan = []  # list of dicts: {"id": int, "title": str, "scope": str, "depends_on": list, "done": bool}
+        self.files = set()
+        self.discoveries = []
+        self.notes = []
+        self.user_prompts = []
 
-def read_scratchpad() -> str:
-    p = scratchpad_path()
-    if p.exists():
-        return p.read_text(encoding="utf-8")
-    return ""
+    def clear(self):
+        self.goal = ""
+        self.plan = []
+        self.files = set()
+        self.discoveries = []
+        self.notes = []
+        self.user_prompts = []
+        if self.path.exists():
+            try:
+                self.path.unlink()
+            except Exception:
+                pass
 
-def write_scratchpad(content: str):
-    p = scratchpad_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
-    log("scratchpad_update", {"path": str(p), "chars": len(content)})
+    def add_prompt(self, prompt: str):
+        if prompt.strip() and prompt.strip() not in self.user_prompts:
+            self.user_prompts.append(prompt.strip())
+            self.write()
+
+    def add_file(self, filepath: str):
+        resolved = Path(filepath).resolve()
+        workspace_roots = CFG["workspace_roots"]
+        path_str = str(resolved)
+        for root in workspace_roots:
+            try:
+                rel = resolved.relative_to(Path(root).resolve())
+                path_str = str(rel)
+                break
+            except ValueError:
+                pass
+        
+        # Never add scratchpad itself to the list
+        if resolved.name == SCRATCHPAD_NAME:
+            return
+
+        if path_str not in self.files:
+            self.files.add(path_str)
+            self.write()
+
+    def add_discovery(self, text: str):
+        if text.strip() and text.strip() not in self.discoveries:
+            self.discoveries.append(text.strip())
+            self.write()
+
+    def add_note(self, text: str):
+        if text.strip() and text.strip() not in self.notes:
+            self.notes.append(text.strip())
+            self.write()
+
+    def mark_done(self, subtask_id: int):
+        for st in self.plan:
+            if st["id"] == subtask_id:
+                st["done"] = True
+        self.write()
+
+    def load_or_init(self, goal: str, subtasks: list = None):
+        self.goal = goal
+        if subtasks:
+            self.plan = [
+                {
+                    "id": st["id"],
+                    "title": st["title"],
+                    "scope": st["scope"],
+                    "depends_on": st.get("depends_on", []),
+                    "done": False,
+                }
+                for st in subtasks
+            ]
+        else:
+            self.plan = []
+        self.write()
+
+    def build_agent_view(self) -> str:
+        """
+        Formats a focused scratchpad for the LLM prompt.
+        Hides future pending tasks so the agent focuses only on current sub-task.
+        """
+        lines = [
+            "## Goal",
+            self.goal or "(none)",
+            "",
+            "## User Prompts History (Session)",
+        ]
+        for idx, p in enumerate(self.user_prompts, 1):
+            lines.append(f"{idx}. {p}")
+        if not self.user_prompts:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Plan Progress",
+        ])
+        
+        current_found = False
+        if self.plan:
+            for st in self.plan:
+                if st["done"]:
+                    lines.append(f"- [x] **[{st['id']}] {st['title']}** (Completed)")
+                elif not current_found:
+                    lines.append(f"- [/] **[{st['id']}] {st['title']}** (CURRENT FOCUS — Only implement this!) — {st['scope']}")
+                    current_found = True
+                else:
+                    # Hide future pending tasks in prompt context
+                    pass
+        else:
+            lines.append("_(no structured plan — single task mode)_")
+
+        lines.extend([
+            "",
+            "## Files Created/Modified",
+        ])
+        for f in sorted(self.files):
+            lines.append(f"- `{f}`")
+        if not self.files:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Key Discoveries",
+        ])
+        for d in self.discoveries:
+            lines.append(f"- {d}")
+        if not self.discoveries:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Notes / Warnings",
+        ])
+        for n in self.notes:
+            lines.append(f"- {n}")
+        if not self.notes:
+            lines.append("_(none yet)_")
+
+        return "\n".join(lines)
+
+    def write(self):
+        """Write the complete plan view to the scratchpad.md file for the user."""
+        lines = [
+            "# Agent Scratchpad",
+            "",
+            "## Goal",
+            "",
+            self.goal or "(none)",
+            "",
+            "## User Prompts History",
+            ""
+        ]
+        for idx, p in enumerate(self.user_prompts, 1):
+            lines.append(f"{idx}. {p}")
+        if not self.user_prompts:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Plan",
+            ""
+        ])
+        for st in self.plan:
+            status = "[x]" if st["done"] else "[ ]"
+            lines.append(f"- {status} **[{st['id']}] {st['title']}** — {st['scope']}")
+        if not self.plan:
+            lines.append("_(no structured plan)_")
+
+        lines.extend([
+            "",
+            "## Files Created/Modified",
+            ""
+        ])
+        for f in sorted(self.files):
+            lines.append(f"- `{f}`")
+        if not self.files:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Key Discoveries",
+            ""
+        ])
+        for d in self.discoveries:
+            lines.append(f"- {d}")
+        if not self.discoveries:
+            lines.append("_(none yet)_")
+
+        lines.extend([
+            "",
+            "## Notes / Warnings",
+            ""
+        ])
+        for n in self.notes:
+            lines.append(f"- {n}")
+        if not self.notes:
+            lines.append("_(none yet)_")
+
+        lines.append("")
+        
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("\n".join(lines), encoding="utf-8")
+        log("scratchpad_update", {"path": str(self.path)})
+
+SCRATCHPAD = ScratchpadManager(Path(CFG["output_dir"]))
 
 def build_system_with_scratchpad() -> str:
     """Inject current scratchpad state into the system prompt."""
-    pad = read_scratchpad()
+    pad = SCRATCHPAD.build_agent_view()
     if not pad.strip():
         return SYSTEM_PROMPT
     return SYSTEM_PROMPT + f"\n\n---\n## Current Scratchpad State\n\n{pad}\n---"
@@ -272,6 +454,26 @@ TOOLS = [
                 "required": ["title", "message"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_scratchpad",
+            "description": "Save critical insights, decisions, variable names, and notes/reminders to your scratchpad.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key_discoveries": {
+                        "type": "string",
+                        "description": "New facts, constraints, variable names, or architecture details discovered. Leave empty if none."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Important reminders, next steps, or warning highlights for future turns. Leave empty if none."
+                    }
+                }
+            }
+        }
     }
 ]
 
@@ -410,9 +612,8 @@ def dispatch(name, args):
                 CFG["output_dir"],
                 append=args.get("append", False),
             )
-            # If the agent wrote the scratchpad, sync it so the next call picks it up
-            if args["filename"] == SCRATCHPAD_NAME:
-                log("scratchpad_update", {"via": "agent_write_file"})
+            if result.get("ok") and "path" in result:
+                SCRATCHPAD.add_file(result["path"])
             return result
 
         elif name == "alert_user":
@@ -440,7 +641,7 @@ def dispatch(name, args):
             return result
 
         elif name == "edit_file_lines":
-            return edit_file_lines(
+            result = edit_file_lines(
                 args["path"],
                 args["start_line"],
                 args["end_line"],
@@ -448,6 +649,18 @@ def dispatch(name, args):
                 roots,
                 create_backup=True,
             )
+            if result.get("ok"):
+                SCRATCHPAD.add_file(args["path"])
+            return result
+
+        elif name == "update_scratchpad":
+            disc = args.get("key_discoveries", "")
+            note = args.get("notes", "")
+            if disc:
+                SCRATCHPAD.add_discovery(disc)
+            if note:
+                SCRATCHPAD.add_note(note)
+            return {"ok": True, "message": "Scratchpad updated successfully."}
 
         else:
             return {"ok": False, "error": f"Unknown tool: {name}"}
@@ -466,12 +679,33 @@ def dispatch(name, args):
             "error_type": type(e).__name__,
         }
 
+def check_user_interrupt() -> str | None:
+    """Non-blocking check if user has typed something and pressed Enter on stdin."""
+    try:
+        rlist, _, _ = select.select([sys.stdin], [], [], 0.0)
+        if rlist:
+            line = sys.stdin.readline()
+            return line.strip()
+    except Exception:
+        pass
+    return None
+
 # ── agent turn (with context eviction) ───────────────────────────────────────
 def run_turn(user_input: str, history: list) -> list:
     history.append({"role": "user", "content": user_input})
     log("user", {"content": user_input})
 
-    for _ in range(12):   # max tool rounds per turn
+    for round_idx in range(12):   # max tool rounds per turn
+        if round_idx > 0:
+            interrupt_msg = check_user_interrupt()
+            if interrupt_msg is not None:
+                print(f"\n{RED}{bold('[INTERRUPT]')}{RST} Pause requested by user. Typed: {bold(interrupt_msg)}")
+                ans = input(f"  Type correction to redirect, or press Enter to resume: ").strip()
+                feedback = ans if ans else interrupt_msg
+                print(f"  Resuming with user correction: {info(feedback)}")
+                history.append({"role": "user", "content": f"User correction/interruption: {feedback}"})
+                log("user_interrupt", {"feedback": feedback})
+
         history = maybe_evict(history)
         resp    = call_ollama(history)
         if not resp:
@@ -758,32 +992,6 @@ def satisfaction_check(subtask: dict, last_response: str, history: list, origina
     except json.JSONDecodeError:
         return {"satisfied": True, "reason": "Invalid evaluator JSON — assuming done.", "next_action": ""}
 
-# ── scratchpad initializer ────────────────────────────────────────────────────
-def init_scratchpad(user_request: str, subtasks: list | None):
-    """Write the initial scratchpad with the overall goal and plan."""
-    lines = [
-        "# Agent Scratchpad\n",
-        f"## Goal\n\n{user_request}\n",
-    ]
-    if subtasks:
-        lines.append("## Plan\n")
-        for st in subtasks:
-            lines.append(f"- [ ] **[{st['id']}] {st['title']}** — {st['scope']}")
-        lines.append("")
-    lines.append("## Key Discoveries\n\n_(none yet)_\n")
-    lines.append("## Current Sub-task\n\n_(starting)_\n")
-    lines.append("## Notes\n\n_(none yet)_\n")
-
-    write_scratchpad("\n".join(lines))
-
-def mark_subtask_done(subtask: dict):
-    """Update scratchpad to mark a sub-task as complete."""
-    pad = read_scratchpad()
-    marker = f"- [ ] **[{subtask['id']}]"
-    done   = f"- [x] **[{subtask['id']}]"
-    updated = pad.replace(marker, done, 1)
-    write_scratchpad(updated)
-
 # ── run a single sub-task with satisfaction loop ──────────────────────────────
 def run_subtask(subtask: dict, base_history: list, original_request: str = "") -> tuple[str, list]:
     """
@@ -896,6 +1104,9 @@ def main():
             print(dim("  " + line))
         print(dim("─" * 52 + "\n"))
 
+    # Clear scratchpad at startup
+    SCRATCHPAD.clear()
+
     while True:
         try:
             user_input = input(f"\n{BLD}You:{RST} ").strip()
@@ -908,21 +1119,23 @@ def main():
             print("Bye!")
             break
 
+        # Record prompt to the persistent scratchpad history
+        SCRATCHPAD.add_prompt(user_input)
+
         # ── Step 1: Planner Pass ─────────────────────────────────────────────
         subtasks = planner_pass(user_input)
 
         if not subtasks:
             # No plan (simple task or planner disabled) — run as single turn
-            init_scratchpad(user_input, None)
+            SCRATCHPAD.load_or_init(user_input, None)
             simple_subtask = {"id": 1, "title": user_input, "scope": user_input, "depends_on": []}
-
-            run_subtask(simple_subtask, [])
+            run_subtask(simple_subtask, [], original_request=user_input)
             alert_user("Agent done", "Task complete.")
             continue
 
         # ── Step 2: Initialise scratchpad ────────────────────────────────────
-        init_scratchpad(user_input, subtasks)
-        print(f"\n{dim(f'Plan saved to: {scratchpad_path()}')}")
+        SCRATCHPAD.load_or_init(user_input, subtasks)
+        print(f"\n{dim(f'Plan saved to: {SCRATCHPAD.path}')}")
 
         # ── Step 3: Execute sub-tasks with satisfaction loop ─────────────────
         total   = len(subtasks)
@@ -934,7 +1147,7 @@ def main():
             print(dim('─'*55))
 
             _, history = run_subtask(subtask, history, original_request=user_input)
-            mark_subtask_done(subtask)
+            SCRATCHPAD.mark_done(subtask["id"])
 
         # ── Step 4: Done ─────────────────────────────────────────────────────
         print(f"\n{ok('✓')} {bold('All sub-tasks complete.')}")
