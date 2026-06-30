@@ -20,7 +20,6 @@ enable_thinking: true
 # ── workspace ────────────────────────────────────────────────────
 # Folders the agent is ALLOWED to read. Add your real paths here.
 workspace_roots:
-  - "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/jpc"
   - "/Users/nikunjgupta/Downloads/PROJECTS/local-agent"
   
 
@@ -66,7 +65,7 @@ blocked_commands:
 # 0 = final answer only
 # 1 = show tool calls + results        ← recommended default
 # 2 = also show system prompt + thinking tokens
-debug_level: 1
+debug_level: 2
 
 
 # ── scope assessment (planner pass) ─────────────────────────────────────────
