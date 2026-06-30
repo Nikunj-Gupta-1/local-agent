@@ -85,3 +85,10 @@ satisfaction_loop:
   enabled: true
   max_retries: 4              # Per sub-task
   evaluator_temperature: 0.1  # Keep evaluator deterministic
+
+
+# ── prompt refiner pass ──────────────────────────────────────────────────────
+# Before planning, ask the LLM to refine and expand the prompt into a detailed spec.
+prompt_refiner:
+  enabled: true
+

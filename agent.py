@@ -1,4 +1,4 @@
-import os, sys, json, re, datetime, select
+import os, sys, json, re, datetime, select, termios, tty
 import yaml, requests
 from pathlib import Path
 
@@ -274,6 +274,16 @@ def build_system_with_scratchpad() -> str:
     if not pad.strip():
         return SYSTEM_PROMPT
     return SYSTEM_PROMPT + f"\n\n---\n## Current Scratchpad State\n\n{pad}\n---"
+
+def read_scratchpad() -> str:
+    """Read the current scratchpad markdown file."""
+    if SCRATCHPAD.path.exists():
+        try:
+            return SCRATCHPAD.path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return ""
+
 
 # ── tool schema (Ollama native tool-call format) ──────────────────────────────
 TOOLS = [
@@ -679,16 +689,55 @@ def dispatch(name, args):
             "error_type": type(e).__name__,
         }
 
-def check_user_interrupt() -> str | None:
-    """Non-blocking check if user has typed something and pressed Enter on stdin."""
+def check_user_interrupt() -> bool:
+    """Non-blocking check if user has pressed Tab or Escape key."""
+    fd = sys.stdin.fileno()
+    if not os.isatty(fd):
+        return False
+    old_settings = termios.tcgetattr(fd)
     try:
+        tty.setraw(fd)
         rlist, _, _ = select.select([sys.stdin], [], [], 0.0)
         if rlist:
-            line = sys.stdin.readline()
-            return line.strip()
+            char = sys.stdin.read(1)
+            # \t is Tab, \x1b is Escape
+            if char in ("\t", "\x1b"):
+                return True
     except Exception:
         pass
-    return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return False
+
+
+def clean_args(args):
+    """Recursively search and clean double-escaped strings in tool call arguments."""
+    if isinstance(args, dict):
+        return {k: clean_args(v) for k, v in args.items()}
+    elif isinstance(args, list):
+        return [clean_args(v) for v in args]
+    elif isinstance(args, str):
+        if '\\' in args and '\n' not in args:
+            is_code = (
+                '\\n' in args and (
+                    ' ' in args or
+                    '=' in args or
+                    '(' in args or
+                    'def ' in args or
+                    'class ' in args or
+                    'import ' in args
+                )
+            )
+            is_escaped_quote = '\\"' in args or "\\'" in args
+            if is_code or is_escaped_quote:
+                try:
+                    decoded = json.loads('"' + args + '"')
+                    return decoded
+                except Exception:
+                    pass
+        return args
+    else:
+        return args
 
 # ── agent turn (with context eviction) ───────────────────────────────────────
 def run_turn(user_input: str, history: list) -> list:
@@ -696,15 +745,22 @@ def run_turn(user_input: str, history: list) -> list:
     log("user", {"content": user_input})
 
     for round_idx in range(12):   # max tool rounds per turn
+        # Update system prompt with the latest scratchpad state
+        for msg in history:
+            if msg.get("role") == "system":
+                msg["content"] = build_system_with_scratchpad()
+                break
+
         if round_idx > 0:
-            interrupt_msg = check_user_interrupt()
-            if interrupt_msg is not None:
-                print(f"\n{RED}{bold('[INTERRUPT]')}{RST} Pause requested by user. Typed: {bold(interrupt_msg)}")
-                ans = input(f"  Type correction to redirect, or press Enter to resume: ").strip()
-                feedback = ans if ans else interrupt_msg
-                print(f"  Resuming with user correction: {info(feedback)}")
-                history.append({"role": "user", "content": f"User correction/interruption: {feedback}"})
-                log("user_interrupt", {"feedback": feedback})
+            if check_user_interrupt():
+                print(f"\n{RED}{bold('[INTERRUPT]')}{RST} Pause requested by user (Tab/Esc pressed).")
+                feedback = input(f"  Type correction to redirect, or press Enter to resume: ").strip()
+                if feedback:
+                    print(f"  Resuming with user correction: {info(feedback)}")
+                    history.append({"role": "user", "content": f"User correction/interruption: {feedback}"})
+                    log("user_interrupt", {"feedback": feedback})
+                else:
+                    print("  Resuming agent execution...")
 
         history = maybe_evict(history)
         resp    = call_ollama(history)
@@ -733,6 +789,7 @@ def run_turn(user_input: str, history: list) -> list:
                 name = fn.get("name", "")
                 raw  = fn.get("arguments", {})
                 args = json.loads(raw) if isinstance(raw, str) else raw
+                args = clean_args(args)
 
                 if DEBUG >= 1:
                     display_args = {k: v for k, v in args.items() if k != "content"}
@@ -1074,6 +1131,83 @@ def run_subtask(subtask: dict, base_history: list, original_request: str = "") -
 
     return last_response, history
 
+def refiner_pass(user_input: str) -> str:
+    """
+    Refine the user's prompt by expanding it into a detailed system specification
+    using the model, allowing the user to accept, edit, or reject the refinement.
+    """
+    refiner_cfg = CFG.get("prompt_refiner", {})
+    if not refiner_cfg.get("enabled", True):
+        return user_input
+
+    # Skip for simple CLI commands or exit statements
+    if user_input.lower() in ("exit", "quit", "bye") or len(user_input) < 10:
+        return user_input
+
+    print(f"\n{mag('◈  Refiner:')} Refining your prompt for better planning...")
+
+    refiner_prompt = f"""\
+You are an expert prompt engineer and software requirements specifier.
+The user wants to run an autonomous AI coding agent with the following request:
+"{user_input}"
+
+Your task is to rewrite, expand, and refine this prompt into a highly detailed, structured, and comprehensive specification.
+Specifically:
+1. Elaborate on the core goals and requirements.
+2. Outline specific inputs, outputs, data formats, and edge cases to handle.
+3. List assumptions, architectural preferences, and testing expectations.
+4. Keep the request clear, actionable, and structured using markdown headers.
+
+Return ONLY the refined prompt (as a detailed markdown document). Do NOT include any introductory or concluding remarks (like "Here is the refined prompt..."). Start directly with the markdown content.
+"""
+
+    refiner_messages = [
+        {"role": "system", "content": "You are a software requirement refining assistant. Output only the refined markdown specification."},
+        {"role": "user", "content": refiner_prompt}
+    ]
+
+    resp = call_ollama(refiner_messages, temperature=0.3, tools=[])
+    if not resp:
+        return user_input
+
+    refined = resp.get("message", {}).get("content", "") or ""
+    refined = refined.strip()
+
+    if not refined or len(refined) < len(user_input) * 0.8:
+        return user_input
+
+    print(f"\n{bold('── Refined Prompt Suggestion ──')}")
+    print(refined)
+    print(f"{bold('───────────────────────────────')}")
+
+    print(f"\n❓ Accept this refined prompt?")
+    print(f"   [y] Accept (recommended)")
+    print(f"   [n] Reject (use original)")
+    print(f"   [e] Edit the refined prompt")
+    
+    ans = input("  Your choice [Y/n/e]: ").strip().lower()
+    if ans == "n":
+        print(f"  Using original prompt.")
+        return user_input
+    elif ans == "e":
+        temp_path = Path(CFG["output_dir"]) / "refined_prompt.md"
+        temp_path.write_text(refined, encoding="utf-8")
+        print(f"\n📝 Saved refined prompt to: {info(temp_path)}")
+        input("  Please open and edit the file in your preferred editor. Press Enter here when saved... ")
+        try:
+            edited = temp_path.read_text(encoding="utf-8").strip()
+            if edited:
+                temp_path.unlink(missing_ok=True)
+                return edited
+        except Exception as e:
+            print(err(f"  Error reading file: {e}. Using un-edited refined prompt."))
+        temp_path.unlink(missing_ok=True)
+        return refined
+    else:
+        print(f"  Using refined prompt.")
+        return refined
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 def main():
     Path(CFG["output_dir"]).mkdir(parents=True, exist_ok=True)
@@ -1118,6 +1252,11 @@ def main():
         if user_input.lower() in ("exit", "quit", "bye"):
             print("Bye!")
             break
+
+        # ── Step 0: Prompt Refiner Pass ──────────────────────────────────────
+        refined_input = refiner_pass(user_input)
+        if refined_input != user_input:
+            user_input = refined_input
 
         # Record prompt to the persistent scratchpad history
         SCRATCHPAD.add_prompt(user_input)
