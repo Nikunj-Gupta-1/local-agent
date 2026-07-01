@@ -595,13 +595,13 @@ def call_nvidia_nim(messages: list, temperature: float = 1.0, tools: list = None
 
     import time
     # Actively pace requests to stay under the rate limits
-    time.sleep(1.0)
+    time.sleep(3.0)
 
     if DEBUG >= 2:
         print(dim(f"\n[DEBUG] → NVIDIA NIM  model={CFG['model']}  messages={len(messages)}  ~{estimate_tokens(messages)} tokens"))
     
-    max_retries = 3
-    retry_delay = 2.0
+    max_retries = 5
+    retry_delay = 3.0
     
     for attempt in range(max_retries):
         if attempt > 0:
