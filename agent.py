@@ -557,6 +557,69 @@ def maybe_evict(messages: list) -> list:
         messages = evict_old_tool_outputs(messages, context_window, target_pct=0.65)
     return messages
 
+# ── AI Provider Configuration ─────────────────────────────────────────────────
+PROVIDER = "ollama"  # "ollama" or "nvidia"
+NVIDIA_API_KEY = ""
+
+def call_nvidia_nim(messages: list, temperature: float = 1.0, tools: list = None) -> dict:
+    url = f"{CFG.get('nvidia_url', 'https://integrate.api.nvidia.com/v1')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model":    CFG["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "top_p":       0.95,
+        "max_tokens":  16384,
+    }
+    
+    # If using Nemotron reasoning budget or enabling thinking
+    if CFG.get("enable_thinking", False):
+        payload["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_budget": 16384
+        }
+
+    # Format tools parameter for OpenAI-compatible endpoint
+    if tools is None:
+        payload["tools"] = TOOLS
+    elif len(tools) > 0:
+        payload["tools"] = tools
+
+    if DEBUG >= 2:
+        print(dim(f"\n[DEBUG] → NVIDIA NIM  model={CFG['model']}  messages={len(messages)}  ~{estimate_tokens(messages)} tokens"))
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=300)
+        r.raise_for_status()
+        res = r.json()
+        choice = res["choices"][0]
+        message = choice["message"]
+        
+        content = message.get("content", "") or ""
+        thinking = message.get("reasoning_content", "") or ""
+        tool_calls = message.get("tool_calls") or []
+        
+        return {
+            "message": {
+                "role": "assistant",
+                "content": content,
+                "thinking": thinking,
+                "tool_calls": tool_calls
+            }
+        }
+    except Exception as e:
+        print(err(f"\n✗ NVIDIA NIM error: {e}"))
+        if 'r' in locals() and r.text:
+            print(dim(f"Response: {r.text}"))
+        return {}
+
+def call_llm(messages: list, temperature: float = 1.0, tools: list = None) -> dict:
+    if PROVIDER == "nvidia":
+        return call_nvidia_nim(messages, temperature, tools)
+    return call_ollama(messages, temperature, tools)
+
 # ── Ollama API ────────────────────────────────────────────────────────────────
 def call_ollama(messages: list, temperature: float = 1.0, tools: list = None) -> dict:
     url = f"{CFG['ollama_url']}/api/chat"
@@ -640,14 +703,22 @@ def dispatch(name, args):
 
         elif name == "run_command":
             cmd = args["cmd"]
-            result = run_command(cmd, blocked, confirm, timeout, max_cmd, auto_confirm=False)
-            if result.get("needs_confirm"):
-                print(f"\n⚠ Needs confirmation: {cmd}")
-                ans = input("  Run it? [y/N] ").strip().lower()
-                if ans == "y":
-                    result = run_command(cmd, blocked, confirm, timeout, max_cmd, auto_confirm=True)
-                else:
-                    result = {"ok": False, "cmd": cmd, "error": "User declined"}
+            # Enforce manual authorization for all commands and check blocked list
+            for pattern in blocked:
+                if pattern in cmd:
+                    return {
+                        "ok": False,
+                        "blocked": True,
+                        "reason": f"Command contains blocked pattern: '{pattern}'",
+                        "cmd": cmd,
+                    }
+            print(f"\n{YLW}⚠  Agent wants to run terminal command:{RST}")
+            print(f"   {bold(cmd)}")
+            ans = input("   Authorize this command? [y/N] ").strip().lower()
+            if ans == "y":
+                result = run_command(cmd, blocked, confirm, timeout, max_cmd, auto_confirm=True)
+            else:
+                result = {"ok": False, "cmd": cmd, "error": "User declined authorization"}
             return result
 
         elif name == "edit_file_lines":
@@ -763,7 +834,7 @@ def run_turn(user_input: str, history: list) -> list:
                     print("  Resuming agent execution...")
 
         history = maybe_evict(history)
-        resp    = call_ollama(history)
+        resp    = call_llm(history)
         if not resp:
             break
 
@@ -900,7 +971,7 @@ def planner_pass(user_request: str) -> list | None:
     ]
 
     print(f"\n{mag('◈  Planner:')} Analysing task scope…")
-    resp = call_ollama(planner_messages, temperature=0.2, tools=[])
+    resp = call_llm(planner_messages, temperature=0.2, tools=[])
     if not resp:
         return None
 
@@ -1034,7 +1105,7 @@ def satisfaction_check(subtask: dict, last_response: str, history: list, origina
         )},
     ]
 
-    resp = call_ollama(eval_messages, temperature=eval_temp, tools=[])
+    resp = call_llm(eval_messages, temperature=eval_temp, tools=[])
     if not resp:
         return {"satisfied": True, "reason": "Evaluator call failed — assuming done.", "next_action": ""}
 
@@ -1166,7 +1237,7 @@ Return ONLY the refined prompt (as a detailed markdown document). Do NOT include
         {"role": "user", "content": refiner_prompt}
     ]
 
-    resp = call_ollama(refiner_messages, temperature=0.3, tools=[])
+    resp = call_llm(refiner_messages, temperature=0.3, tools=[])
     if not resp:
         return user_input
 
@@ -1210,14 +1281,60 @@ Return ONLY the refined prompt (as a detailed markdown document). Do NOT include
 
 # ── main ──────────────────────────────────────────────────────────────────────
 def main():
+    global PROVIDER, NVIDIA_API_KEY
     Path(CFG["output_dir"]).mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{bold('╔══════════════════════════════════════════════════════╗')}")
+    print(f"{bold('║             Select AI Model Provider                 ║')}")
+    print(f"{bold('╚══════════════════════════════════════════════════════╝')}")
+    print("  [1] Local Ollama (default)")
+    print(f"      Model  : {dim(CFG.get('model', 'gemma4-e4b-64k:latest'))}")
+    print("  [2] NVIDIA NIM")
+    print(f"      Model  : {dim('nvidia/nemotron-3-ultra-550b-a55b')}")
+    print("")
+    
+    try:
+        choice = input(bold("Select provider [1-2] (default: 1): ")).strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\nBye!")
+        sys.exit(0)
+
+    if choice == "2":
+        PROVIDER = "nvidia"
+        CFG["model"] = "nvidia/nemotron-3-ultra-550b-a55b"
+        CFG["nvidia_url"] = "https://integrate.api.nvidia.com/v1"
+        CFG["context_window"] = 16384
+        CFG["enable_thinking"] = True
+        
+        env_key = os.environ.get("NVIDIA_API_KEY")
+        cfg_key = CFG.get("nvidia_api_key")
+        
+        if env_key:
+            NVIDIA_API_KEY = env_key
+            print(f"  Using NVIDIA API key from environment variable: {info('NVIDIA_API_KEY')}")
+        elif cfg_key:
+            NVIDIA_API_KEY = cfg_key
+            print(f"  Using NVIDIA API key from {info('config.yaml')}")
+        else:
+            print(warn("\n  NVIDIA API key not found in environment or config."))
+            try:
+                key_input = input(bold("  Paste your NVIDIA API Key: ")).strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nBye!")
+                sys.exit(0)
+            if not key_input:
+                print(err("  Error: NVIDIA API Key is required for NIM."))
+                sys.exit(1)
+            NVIDIA_API_KEY = key_input
+    else:
+        PROVIDER = "ollama"
 
     scope_enabled = CFG.get("scope_assessment", {}).get("enabled", True)
     loop_enabled  = CFG.get("satisfaction_loop", {}).get("enabled", True)
 
     print(f"""
 {BLD}╔══════════════════════════════════════════════════════╗
-║    Local Ollama Agent  ·  ready                      ║
+║    Local Agent Ready  ·  {PROVIDER.upper()} Mode          ║
 ╚══════════════════════════════════════════════════════╝{RST}
   Model   : {info(CFG['model'])}
   Context : {info(str(CFG.get('context_window',16384)) + ' tokens')}

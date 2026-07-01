@@ -20,3 +20,6 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# User config containing local credentials
+config.yaml

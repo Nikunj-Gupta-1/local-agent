@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────
-# Local Ollama Agent — config.yaml
-# Edit workspace_roots to point to YOUR folders
+# Local Agent — config.yaml.example
+# Copy this file to config.yaml and edit paths and API keys
 # ─────────────────────────────────────────────────────────────────
 
 # ── model ───────────────────────────────────────────────────────
@@ -9,25 +9,26 @@
 model: "gemma4-e4b-64k:latest"
 ollama_url: "http://127.0.0.1:11434"
 
-# Gemma 4 8B supports 131 072 token context.
-# Keep this lower for speed; raise it if you need to read very large files.
+# NVIDIA NIM Configuration (if using NVIDIA provider)
+nvidia_url: "https://integrate.api.nvidia.com/v1"
+nvidia_api_key: ""  # Paste your NVIDIA API key here to skip startup prompts
+
+# Context Window (e.g. 65536 for Gemma 4 8B, or 16384 for Nemotron NIM)
 context_window: 65536
 
-# Set to true to let Ollama surface the model's <think>…</think> trace.
-# Only works when debug_level >= 2.
+# Set to true to let the model surface the reasoning/thinking trace
 enable_thinking: true
 
 # ── workspace ────────────────────────────────────────────────────
 # Folders the agent is ALLOWED to read. Add your real paths here.
 workspace_roots:
-  - "/Users/nikunjgupta/Downloads/PROJECTS/local-agent"
-  
+  - "/path/to/your/workspace"
 
 # All files the agent creates go here (never outside this dir)
-output_dir: "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/output"
+output_dir: "/path/to/your/workspace/output"
 
 # Session audit logs
-log_dir: "/Users/nikunjgupta/Downloads/PROJECTS/local-agent/logs/sessions"
+log_dir: "/path/to/your/workspace/logs/sessions"
 
 # ── limits ───────────────────────────────────────────────────────
 # Max bytes read from a single file (~64 KB default)
@@ -90,4 +91,3 @@ satisfaction_loop:
 # Before planning, ask the LLM to refine and expand the prompt into a detailed spec.
 prompt_refiner:
   enabled: true
-

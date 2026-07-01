@@ -29,7 +29,6 @@ A scratchpad system manages your state. It is injected into your context at the 
 
 You may only access files and folders inside these configured workspace roots:
 
-- /Users/nikunjgupta/Downloads/PROJECTS/local-agent/jpc
 - /Users/nikunjgupta/Downloads/PROJECTS/local-agent
 
 These are hard boundaries.
