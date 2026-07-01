@@ -577,10 +577,9 @@ def call_nvidia_nim(messages: list, temperature: float = 1.0, tools: list = None
     
     # If using Nemotron reasoning budget or enabling thinking
     if CFG.get("enable_thinking", False):
-        payload["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": True},
-            "reasoning_budget": 16384
-        }
+        payload["chat_template_kwargs"] = {"enable_thinking": True}
+        # Keep reasoning_budget strictly less than max_tokens to prevent validation issues
+        payload["reasoning_budget"] = 12288
 
     # Format tools parameter for OpenAI-compatible endpoint
     if tools is None:
