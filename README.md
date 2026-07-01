@@ -1,7 +1,8 @@
-# Local Ollama Agent
+# Local Agent (Ollama & NVIDIA NIM)
 
-A lightweight Python agent that connects **Gemma 4 8B** (or any Ollama model) to your
-local filesystem and terminal — no Claude Code, no cloud, no IDE required.
+A lightweight Python agent that connects your local filesystem and terminal to local LLMs (via Ollama) or free state-of-the-art cloud models (via NVIDIA NIM) — no Claude Code, no cloud subscriptions, no IDE required. 
+
+This serves as a local wrapper to use with **free NVIDIA NIM AI models**, allowing for **unlimited LLM usage** at a slower pace (using rate-limit pacing) than large commercial tools like Antigravity and Claude, but **totally free and open source**.
 
 ---
 
@@ -14,7 +15,7 @@ local filesystem and terminal — no Claude Code, no cloud, no IDE required.
 | Capture command output automatically | `subprocess` → fed back to model |
 | Write files you can open | `write_file` → always goes into `output/` |
 | Ask you a question when confused | `ask_user` → pauses the loop |
-| Show its thinking | Ollama `thinking` field printed if `debug_level: 2` |
+| Show its thinking | Ollama & NVIDIA NIM `thinking` field printed if `debug_level: 2` |
 | Show system prompt | Printed at startup if `debug_level: 2` |
 | Audit log | Every tool call logged to `logs/sessions/session_*.jsonl` |
 
@@ -23,13 +24,15 @@ local filesystem and terminal — no Claude Code, no cloud, no IDE required.
 ## Requirements
 
 - Python 3.11+
-- Ollama running locally (`ollama serve` or Ollama.app)
-- Gemma 4 pulled: `ollama pull gemma4`
 - Two pip packages:
-
-```bash
-pip install requests pyyaml
-```
+  ```bash
+  pip install requests pyyaml
+  ```
+- **For Local Ollama Mode**:
+  - Ollama running locally (`ollama serve` or Ollama.app)
+  - Gemma 4 pulled: `ollama pull gemma4`
+- **For NVIDIA NIM Mode**:
+  - A free NVIDIA developer API key (set in your environment as `NVIDIA_API_KEY` or in `config.yaml` as `nvidia_api_key`)
 
 ---
 
@@ -39,14 +42,13 @@ pip install requests pyyaml
 # 1. Clone / copy this folder somewhere on your Mac
 cd ~/local-agent
 
-# 2. Edit config.yaml — set your workspace_roots to real folders
+# 2. Edit config.yaml — set your workspace_roots to real folders and optionally add your nvidia_api_key
 nano config.yaml
 
-# 3. Make sure Ollama is running
-ollama serve &   # or open Ollama.app
-
-# 4. Run
+# 3. Run
 python agent.py
+
+# 4. Choose your provider (Ollama or NVIDIA NIM) in the terminal prompt
 ```
 
 ---
@@ -56,7 +58,7 @@ python agent.py
 Think of it as **three layers talking to each other**:
 
 ```
-YOU  →  agent.py  →  Ollama (Gemma 4)
+YOU  →  agent.py  →  Ollama (Gemma 4) OR NVIDIA NIM (Nemotron 3)
               ↑             ↓
          tool results ← tool calls
               ↑
@@ -70,10 +72,9 @@ YOU  →  agent.py  →  Ollama (Gemma 4)
 2. **agent.py** takes your message and adds it to a running conversation list
    (just a Python list of `{"role": ..., "content": ...}` dicts).
 
-3. **agent.py sends the whole conversation + the tool list** to Ollama's local
-   HTTP API at `http://127.0.0.1:11434/api/chat`.
+3. **agent.py sends the whole conversation + the tool list** to Ollama's local HTTP API or the NVIDIA NIM API.
 
-4. **Gemma 4 reads your message and the tool descriptions** and decides:
+4. **The LLM reads your message and the tool descriptions** and decides:
    - *"I can answer directly"* → returns plain text → agent prints it → done.
    - *"I need to look at a file first"* → returns a structured tool call JSON.
    - *"This is ambiguous"* → calls `ask_user` → agent pauses and asks you.
@@ -81,25 +82,19 @@ YOU  →  agent.py  →  Ollama (Gemma 4)
 5. **If there is a tool call**, agent.py calls the matching Python function
    (`list_dir`, `run_command`, etc.) and captures the result.
 
-6. **The result is added to the conversation** and sent back to Gemma.
+6. **The result is added to the conversation** and sent back to the LLM.
 
-7. **Gemma reads the result** and either answers or calls another tool.
+7. **The LLM reads the result** and either answers or calls another tool.
 
-8. **This loop repeats** until Gemma gives a final plain-text answer.
+8. **This loop repeats** until the LLM gives a final plain-text answer.
 
-### Why it is faster than Claude Code
+### Free Unlimited NIM Pacing
 
-Claude Code wraps every call in a thick agent layer with safety checks,
-dynamic system prompts, editor integrations, and retries. This script does
-exactly one thing: send a message, maybe run a tool, repeat. Fewer layers =
-less overhead = faster responses for simple file/shell tasks.
+When running in NVIDIA NIM mode with the free tier, the agent actively paces its requests (with a built-in 3.0s delay between calls) and handles rate limits (HTTP 429/503) with exponential backoff. This allows for **unlimited agent runs** without paying a dime, serving as a slower but totally free and open-source alternative to cloud-metered tools like Antigravity or Claude Code.
 
 ### Thinking tokens
 
-Gemma 4 supports native thinking output. When `enable_thinking: true` and
-`debug_level: 2`, the agent prints the model's internal reasoning trace (wrapped
-in `── 🧠 thinking ──` blocks) before each tool call and before the final answer.
-This is fully optional and has no effect on the answer quality.
+Both Gemma 4 and NVIDIA's Nemotron models support native thinking/reasoning output. When `enable_thinking: true` and `debug_level: 2`, the agent prints the model's internal reasoning trace (wrapped in `── 🧠 thinking ──` blocks) before each tool call and before the final answer. This is fully optional and has no effect on the answer quality.
 
 ---
 
