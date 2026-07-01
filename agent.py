@@ -593,32 +593,52 @@ def call_nvidia_nim(messages: list, temperature: float = 1.0, tools: list = None
     elif len(tools) > 0:
         payload["tools"] = tools
 
+    import time
+    # Actively pace requests to stay under the rate limits
+    time.sleep(1.0)
+
     if DEBUG >= 2:
         print(dim(f"\n[DEBUG] → NVIDIA NIM  model={CFG['model']}  messages={len(messages)}  ~{estimate_tokens(messages)} tokens"))
-    try:
-        r = requests.post(url, json=payload, headers=headers, timeout=300)
-        r.raise_for_status()
-        res = r.json()
-        choice = res["choices"][0]
-        message = choice["message"]
-        
-        content = message.get("content", "") or ""
-        thinking = message.get("reasoning_content", "") or ""
-        tool_calls = message.get("tool_calls") or []
-        
-        return {
-            "message": {
-                "role": "assistant",
-                "content": content,
-                "thinking": thinking,
-                "tool_calls": tool_calls
+    
+    max_retries = 3
+    retry_delay = 2.0
+    
+    for attempt in range(max_retries):
+        if attempt > 0:
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+            
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=300)
+            if r.status_code in (429, 503):
+                print(warn(f"\n  [NVIDIA NIM] Service busy/rate-limited (HTTP {r.status_code}). Retrying in {retry_delay}s... (Attempt {attempt+1}/{max_retries})"))
+                continue
+                
+            r.raise_for_status()
+            res = r.json()
+            choice = res["choices"][0]
+            message = choice["message"]
+            
+            content = message.get("content", "") or ""
+            thinking = message.get("reasoning_content", "") or ""
+            tool_calls = message.get("tool_calls") or []
+            
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "thinking": thinking,
+                    "tool_calls": tool_calls
+                }
             }
-        }
-    except Exception as e:
-        print(err(f"\n✗ NVIDIA NIM error: {e}"))
-        if 'r' in locals() and r.text:
-            print(dim(f"Response: {r.text}"))
-        return {}
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(err(f"\n✗ NVIDIA NIM error after {max_retries} attempts: {e}"))
+                if 'r' in locals() and r.text:
+                    print(dim(f"Response: {r.text}"))
+                return {}
+            print(warn(f"\n  [NVIDIA NIM] Attempt {attempt + 1} failed: {e}. Retrying... (Attempt {attempt+1}/{max_retries})"))
+    return {}
 
 def call_llm(messages: list, temperature: float = 1.0, tools: list = None) -> dict:
     if PROVIDER == "nvidia":
