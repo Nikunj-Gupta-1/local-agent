@@ -533,10 +533,16 @@ def evict_old_tool_outputs(messages: list, context_window: int, target_pct: floa
         except Exception:
             continue
         # Replace with placeholder
-        msgs[i] = {
+        # Replace with placeholder, preserving tool_call_id and name
+        new_msg = {
             "role":    "tool",
             "content": json.dumps({"ok": True, "content": EVICT_PLACEHOLDER}, ensure_ascii=False),
         }
+        if "tool_call_id" in msg:
+            new_msg["tool_call_id"] = msg["tool_call_id"]
+        if "name" in msg:
+            new_msg["name"] = msg["name"]
+        msgs[i] = new_msg
         if DEBUG >= 1:
             print(dim(f"   [ctx] evicted tool message at index {i}"))
         log("context_eviction", {"index": i, "original_chars": len(content_str)})
@@ -883,10 +889,18 @@ def run_turn(user_input: str, history: list) -> list:
                     else:
                         print()
 
-                history.append({
+                tc_id = tc.get("id")
+                tool_msg = {
                     "role":    "tool",
                     "content": json.dumps(result, ensure_ascii=False),
-                })
+                }
+                if tc_id:
+                    tool_msg["tool_call_id"] = tc_id
+                elif PROVIDER == "nvidia":
+                    tool_msg["tool_call_id"] = f"call_{name}_{calls.index(tc)}"
+                
+                tool_msg["name"] = name
+                history.append(tool_msg)
 
         else:
             # No tool calls — final answer
@@ -1370,9 +1384,9 @@ def main():
             break
 
         # ── Step 0: Prompt Refiner Pass ──────────────────────────────────────
-        refined_input = refiner_pass(user_input)
-        if refined_input != user_input:
-            user_input = refined_input
+        # refined_input = refiner_pass(user_input)
+        # if refined_input != user_input:
+        #     user_input = refined_input
 
         # Record prompt to the persistent scratchpad history
         SCRATCHPAD.add_prompt(user_input)
