@@ -1336,7 +1336,7 @@ def main():
         PROVIDER = "nvidia"
         CFG["model"] = "nvidia/nemotron-3-ultra-550b-a55b"
         CFG["nvidia_url"] = "https://integrate.api.nvidia.com/v1"
-        CFG["context_window"] = 16384
+        CFG["context_window"] = 1000000
         CFG["enable_thinking"] = True
         
         env_key = os.environ.get("NVIDIA_API_KEY")
