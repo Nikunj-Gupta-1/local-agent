@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ── macOS Window Header ── -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="traffic-lights">
+        <div class="traffic-dot red"></div>
+        <div class="traffic-dot yellow"></div>
+        <div class="traffic-dot green"></div>
+      </div>
+      <div class="project-pill" id="projectPill" title="Click to change workspace folder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+        <span id="activeProjectName">local-agent</span>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="model-switcher">
+        <span class="provider-badge" id="currentProviderBadge">OLLAMA</span>
+        <select class="model-select" id="headerModelSelect">
+          <option value="gemma4-e4b-64k:latest">gemma4-e4b-64k:latest</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="mode-selector">
+        <button class="mode-btn active" data-mode="safe" title="Safe Mode: Terminal commands and file edits require confirmation">Safe</button>
+        <button class="mode-btn" data-mode="auto" title="Full Auto: Autonomous execution without prompts">Auto</button>
+        <button class="mode-btn" data-mode="strict" title="Strict: Confirm every tool call">Strict</button>
+      </div>
+
+      <button class="header-btn" id="memoryBtn" title="Long-term Project Memory (RAG)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a8 8 0 0 0-8 8c0 3.3 2 6.2 5 7.4V20a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2.6c3-1.2 5-4.1 5-7.4a8 8 0 0 0-8-8z"></path><path d="M10 16h4"></path></svg>
+        Memory
+      </button>
+
+      <button class="header-btn" id="scratchpadBtn" title="View Active Plan & Scratchpad">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        Plan
+      </button>
+
+      <button class="header-btn" id="settingsBtn" title="AI Source Settings">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── App Body ── -->
+  <div class="app-body">
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <button class="new-chat-btn" id="newChatBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New Task
+        </button>
+      </div>
+      <div class="sidebar-content">
+        <div>
+          <div class="sidebar-section-title">Sessions</div>
+          <div class="session-list" id="sessionList">
+            <div class="session-item active">Current Workspace Session</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="sidebar-section-title">Workspace Files</div>
+          <div class="file-list" id="fileList">
+            <div class="file-item">Loading files...</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Main Chat Area ── -->
+    <main class="chat-canvas">
+      <div class="messages-container" id="messagesContainer">
+        <!-- Welcome empty state -->
+        <div class="message-row" id="emptyState">
+          <div style="text-align: center; margin: 80px auto; max-width: 500px;">
+            <div style="display: inline-flex; padding: 14px; background: rgba(0,210,255,0.08); border-radius: 50%; margin-bottom: 16px;">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+            </div>
+            <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">Local Coding Agent Ready</h2>
+            <p style="color: var(--text-muted); font-size: 13.5px; line-height: 1.5;">
+              Select an AI source (Ollama, NVIDIA NIM, Gemini, LM Studio), provide a goal, and watch the agent plan, code, and execute safely with long-term memory.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Bottom Input Area ── -->
+      <div class="input-area">
+        <div class="input-box-wrapper">
+          <textarea
+            class="chat-input"
+            id="chatInput"
+            placeholder="Instruct the agent (e.g. 'Refactor auth module', 'Run tests and fix errors')..."
+            rows="1"
+          ></textarea>
+          <div class="input-actions-bar">
+            <div>
+              <button class="stop-pill-btn" id="stopBtn" style="display: none;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect width="24" height="24" rx="2"></rect></svg>
+                Interrupt Agent
+              </button>
+            </div>
+            <button class="send-btn" id="sendBtn" title="Send (Enter)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Scratchpad & Plan Drawer ── -->
+    <aside class="drawer-right" id="scratchpadDrawer">
+      <div class="drawer-header">
+        <span style="font-weight: 600; font-size: 13.5px;">Task Plan & Scratchpad</span>
+        <button id="closeScratchpad" style="background: none; border: none; color: var(--text-muted); cursor: pointer;">✕</button>
+      </div>
+      <div class="drawer-body" id="scratchpadContent">
+        <div>
+          <div style="font-weight: 600; color: var(--accent-cyan); margin-bottom: 4px;">Current Goal</div>
+          <div id="scratchpadGoal" style="color: var(--text-muted); font-size: 12.5px;">(none)</div>
+        </div>
+        <div>
+          <div style="font-weight: 600; margin-bottom: 6px;">Plan Progress</div>
+          <div id="scratchpadPlan" style="display: flex; flex-direction: column; gap: 4px;">(no structured plan)</div>
+        </div>
+        <div>
+          <div style="font-weight: 600; margin-bottom: 6px;">Files Modified</div>
+          <div id="scratchpadFiles" style="color: var(--text-muted); font-family: var(--font-mono); font-size: 12px;">(none)</div>
+        </div>
+        <div>
+          <div style="font-weight: 600; margin-bottom: 6px;">Key Discoveries</div>
+          <div id="scratchpadDiscoveries" style="color: var(--text-muted); font-size: 12.5px;">(none)</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ── Settings Modal (AI Source Setup Screen) ── -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 600; font-size: 15px;">AI Source & Application Setup</span>
+        <button id="closeSettings" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Default Provider -->
+        <div class="config-row">
+          <label class="config-label">Active Provider</label>
+          <select class="config-input" id="cfgProvider">
+            <option value="ollama">Local Ollama</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="nvidia">NVIDIA NIM</option>
+            <option value="lmstudio">LM Studio / Local AI (OpenAI Compatible)</option>
+          </select>
+        </div>
+
+        <!-- Google Gemini Card -->
+        <div class="provider-config-box">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600; font-size: 13.5px; color: #60a5fa;">Google Gemini API</span>
+            <button class="test-btn" onclick="testProvider('gemini')">Test Connection</button>
+          </div>
+          <div class="config-row">
+            <label class="config-label">Gemini API Key</label>
+            <input type="password" class="config-input" id="cfgGeminiKey" placeholder="AIzaSy...">
+          </div>
+          <div class="config-row">
+            <label class="config-label">Model</label>
+            <input type="text" class="config-input" id="cfgGeminiModel" placeholder="gemini-2.5-flash">
+          </div>
+          <div id="geminiTestStatus" style="font-size: 12px;"></div>
+        </div>
+
+        <!-- NVIDIA NIM Card -->
+        <div class="provider-config-box">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600; font-size: 13.5px; color: #34d399;">NVIDIA NIM</span>
+            <button class="test-btn" onclick="testProvider('nvidia')">Test Connection</button>
+          </div>
+          <div class="config-row">
+            <label class="config-label">NVIDIA API Key</label>
+            <input type="password" class="config-input" id="cfgNvidiaKey" placeholder="nvapi-...">
+          </div>
+          <div class="config-row">
+            <label class="config-label">Model</label>
+            <input type="text" class="config-input" id="cfgNvidiaModel" placeholder="nvidia/nemotron-3-ultra-550b-a55b">
+          </div>
+          <div id="nvidiaTestStatus" style="font-size: 12px;"></div>
+        </div>
+
+        <!-- Local Ollama Card -->
+        <div class="provider-config-box">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600; font-size: 13.5px; color: var(--accent-cyan);">Local Ollama</span>
+            <button class="test-btn" onclick="testProvider('ollama')">Test Connection</button>
+          </div>
+          <div class="config-row">
+            <label class="config-label">Ollama Endpoint URL</label>
+            <input type="text" class="config-input" id="cfgOllamaUrl" value="http://127.0.0.1:11434">
+          </div>
+          <div class="config-row">
+            <label class="config-label">Model Name</label>
+            <input type="text" class="config-input" id="cfgOllamaModel" placeholder="gemma4-e4b-64k:latest">
+          </div>
+          <div id="ollamaTestStatus" style="font-size: 12px;"></div>
+        </div>
+
+        <!-- LM Studio / OpenAI-Compatible Card -->
+        <div class="provider-config-box">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600; font-size: 13.5px; color: #c084fc;">LM Studio / OpenAI-Compatible Endpoint</span>
+            <button class="test-btn" onclick="testProvider('lmstudio')">Test Connection</button>
+          </div>
+          <div class="config-row">
+            <label class="config-label">Base URL</label>
+            <input type="text" class="config-input" id="cfgLmUrl" value="http://localhost:1234/v1">
+          </div>
+          <div class="config-row">
+            <label class="config-label">Model</label>
+            <input type="text" class="config-input" id="cfgLmModel" placeholder="local-model">
+          </div>
+          <div id="lmstudioTestStatus" style="font-size: 12px;"></div>
+        </div>
+
+        <button class="btn-authorize" id="saveSettingsBtn" style="padding: 10px; font-size: 13px;">Save All Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Memory Viewer Modal (RAG) ── -->
+  <div class="modal-overlay" id="memoryModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 600; font-size: 15px;">Long-Term Memory Store (RAG)</span>
+        <button id="closeMemory" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px;">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 12.5px; color: var(--text-muted);">Indexed project decisions, architecture notes, and solutions</span>
+          <button class="btn-reject" id="clearMemoryBtn" style="padding: 4px 10px; font-size: 11px;">Clear Memories</button>
+        </div>
+        <div id="memoryList" style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="color: var(--text-dim); font-size: 13px;">Loading memories...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

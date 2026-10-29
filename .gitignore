@@ -8,6 +8,7 @@ ENV/
 output/
 logs/
 notes/
+data/
 
 # Python cache & compiled files
 __pycache__/

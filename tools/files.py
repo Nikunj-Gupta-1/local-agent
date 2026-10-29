@@ -123,6 +123,14 @@ def stat_file(path: str, roots: list[str]) -> dict:
         return {"ok": False, "error": f"Path does not exist: {path}"}
     s = p.stat()
     import datetime
+    total_lines = None
+    if p.is_file():
+        try:
+            with p.open("rb") as f:
+                total_lines = sum(1 for _ in f)
+        except Exception:
+            pass
+
     return {
         "ok": True,
         "path": str(p),
@@ -130,7 +138,7 @@ def stat_file(path: str, roots: list[str]) -> dict:
         "modified": datetime.datetime.fromtimestamp(s.st_mtime).isoformat(),
         "is_dir": p.is_dir(),
         "suffix": p.suffix,
-        "total_lines": sum(1 for _ in p.open("rb")) if p.is_file() else None,
+        "total_lines": total_lines,
     }
 
 
