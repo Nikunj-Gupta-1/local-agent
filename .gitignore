@@ -9,6 +9,7 @@ output/
 logs/
 notes/
 data/
+docs/
 
 # Python cache & compiled files
 __pycache__/
