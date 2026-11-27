@@ -12,7 +12,7 @@ def _is_allowed(path: str, roots: list[str]) -> bool:
     target = _resolve(path)
     for root in roots:
         root_path = _resolve(root)
-        if str(target).startswith(str(root_path)):
+        if target == root_path or root_path in target.parents:
             return True
     return False
 

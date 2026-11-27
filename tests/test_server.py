@@ -24,6 +24,11 @@ class TestServerAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn(b"Local Agent", res.data)
 
+        res_css = self.client.get("/style.css")
+        self.assertEqual(res_css.status_code, 200)
+        res_js = self.client.get("/app.js")
+        self.assertEqual(res_js.status_code, 200)
+
     def test_workspace_files(self):
         res = self.client.get("/api/workspace/files")
         self.assertEqual(res.status_code, 200)

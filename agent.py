@@ -269,11 +269,13 @@ class ScratchpadManager:
 SCRATCHPAD = ScratchpadManager(Path(CFG["output_dir"]))
 
 def build_system_with_scratchpad() -> str:
-    """Inject current scratchpad state into the system prompt."""
+    """Inject workspace roots and current scratchpad state into the system prompt."""
+    roots_block = "\n".join(f"- {r}" for r in CFG.get("workspace_roots", [])) or "- ."
+    base = SYSTEM_PROMPT.replace("{workspace_roots_list}", roots_block)
     pad = SCRATCHPAD.build_agent_view()
     if not pad.strip():
-        return SYSTEM_PROMPT
-    return SYSTEM_PROMPT + f"\n\n---\n## Current Scratchpad State\n\n{pad}\n---"
+        return base
+    return base + f"\n\n---\n## Current Scratchpad State\n\n{pad}\n---"
 
 def read_scratchpad() -> str:
     """Read the current scratchpad markdown file."""

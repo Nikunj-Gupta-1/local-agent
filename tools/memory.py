@@ -1,13 +1,12 @@
 """
 tools/memory.py
 ───────────────
-Agent tool for on-demand long-term memory retrieval.
+Agent tool for on-demand long-term memory retrieval with citation IDs.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 from core.memory.store import MemoryStore
 
-# Global store reference injected at runtime
 _MEMORY_STORE: MemoryStore = None
 
 
@@ -31,6 +30,7 @@ def recall_memory(query: str, project_path: str = "") -> Dict[str, Any]:
         "count": len(results),
         "matches": [
             {
+                "cite_id": r.get("cite_id") or f"MEM-{str(r['id'])[:8]}",
                 "category": r["category"],
                 "content": r["content"],
                 "score": r["score"],

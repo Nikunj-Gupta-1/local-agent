@@ -1,7 +1,7 @@
 """
 core/scratchpad.py
 ──────────────────
-Manages persistent task state, subtasks, files modified,
+Manages persistent task state, subtasks, verified tool evidence, files modified,
 discoveries, and notes during agent execution.
 """
 
@@ -21,6 +21,7 @@ class ScratchpadManager:
         self.files: Set[str] = set()
         self.discoveries: List[str] = []
         self.notes: List[str] = []
+        self.evidence: List[str] = []
         self.user_prompts: List[str] = []
 
     def set_output_dir(self, output_dir: Path, workspace_roots: Optional[List[str]] = None):
@@ -35,6 +36,7 @@ class ScratchpadManager:
         self.files = set()
         self.discoveries = []
         self.notes = []
+        self.evidence = []
         self.user_prompts = []
         if self.path.exists():
             try:
@@ -78,10 +80,44 @@ class ScratchpadManager:
             self.notes.append(t)
             self.write()
 
+    def add_evidence(self, items: List[str]):
+        changed = False
+        for item in items:
+            s = item.strip()
+            if s and s not in self.evidence:
+                self.evidence.append(s)
+                changed = True
+        if changed:
+            self.evidence = self.evidence[-15:]
+            self.write()
+
     def mark_done(self, subtask_id: int):
         for st in self.plan:
             if st["id"] == subtask_id:
                 st["done"] = True
+                st["status"] = "done"
+        self.write()
+
+    def mark_failed(self, subtask_id: int):
+        for st in self.plan:
+            if st["id"] == subtask_id:
+                st["done"] = False
+                st["status"] = "failed"
+        self.write()
+
+    def replace_remaining_plan(self, completed_ids: Set[int], new_subtasks: List[Dict[str, Any]]):
+        """Keep completed subtasks and replace pending/failed entries after dynamic replanning."""
+        kept = [st for st in self.plan if st["id"] in completed_ids]
+        for st in new_subtasks:
+            kept.append({
+                "id": st["id"],
+                "title": st["title"],
+                "scope": st["scope"],
+                "depends_on": st.get("depends_on", []),
+                "done": bool(st.get("done", False)),
+                "status": "done" if st.get("done") else "pending",
+            })
+        self.plan = kept
         self.write()
 
     def load_or_init(self, goal: str, subtasks: Optional[List[Dict[str, Any]]] = None):
@@ -94,6 +130,7 @@ class ScratchpadManager:
                     "scope": st["scope"],
                     "depends_on": st.get("depends_on", []),
                     "done": st.get("done", False),
+                    "status": "done" if st.get("done") else st.get("status", "pending"),
                 }
                 for st in subtasks
             ]
@@ -117,8 +154,10 @@ class ScratchpadManager:
         current_found = False
         if self.plan:
             for st in self.plan:
-                if st["done"]:
+                if st.get("done"):
                     lines.append(f"- [x] **[{st['id']}] {st['title']}** (Completed)")
+                elif st.get("status") == "failed":
+                    lines.append(f"- [!] **[{st['id']}] {st['title']}** (Failed / Blocked)")
                 elif not current_found:
                     lines.append(f"- [/] **[{st['id']}] {st['title']}** (CURRENT FOCUS — Only implement this!) — {st['scope']}")
                     current_found = True
@@ -135,6 +174,12 @@ class ScratchpadManager:
         for d in self.discoveries:
             lines.append(f"- {d}")
         if not self.discoveries:
+            lines.append("_(none yet)_")
+
+        lines.extend(["", "## Verified Tool Evidence"])
+        for e in self.evidence[-8:]:
+            lines.append(f"- {e}")
+        if not self.evidence:
             lines.append("_(none yet)_")
 
         lines.extend(["", "## Notes / Warnings"])
@@ -163,8 +208,14 @@ class ScratchpadManager:
 
         lines.extend(["", "## Plan", ""])
         for st in self.plan:
-            status = "[x]" if st.get("done") else "[ ]"
-            lines.append(f"- {status} **[{st['id']}] {st['title']}** — {st['scope']}")
+            if st.get("done"):
+                status = "[x]"
+            elif st.get("status") == "failed":
+                status = "[!]"
+            else:
+                status = "[ ]"
+            deps = f" (depends_on: {st['depends_on']})" if st.get("depends_on") else ""
+            lines.append(f"- {status} **[{st['id']}] {st['title']}**{deps} — {st['scope']}")
         if not self.plan:
             lines.append("_(no structured plan)_")
 
@@ -178,6 +229,12 @@ class ScratchpadManager:
         for d in self.discoveries:
             lines.append(f"- {d}")
         if not self.discoveries:
+            lines.append("_(none yet)_")
+
+        lines.extend(["", "## Verified Tool Evidence", ""])
+        for e in self.evidence[-8:]:
+            lines.append(f"- {e}")
+        if not self.evidence:
             lines.append("_(none yet)_")
 
         lines.extend(["", "## Notes / Warnings", ""])
@@ -200,5 +257,6 @@ class ScratchpadManager:
             "files": sorted(list(self.files)),
             "discoveries": self.discoveries,
             "notes": self.notes,
+            "evidence": self.evidence,
             "user_prompts": self.user_prompts,
         }

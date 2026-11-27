@@ -29,7 +29,7 @@ def save_config(cfg: dict):
         yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
 
 
-app = Flask(__name__, static_folder="../ui/dist", static_url_path="")
+app = Flask(__name__, static_folder=str(Path(__file__).parent / "static"), static_url_path="")
 config = load_config()
 engine = AgentEngine(config)
 
@@ -141,6 +141,16 @@ def respond_action():
 def interrupt_run():
     engine.interrupt()
     return jsonify({"ok": True, "message": "Interrupt requested."})
+
+
+@app.route("/api/redirect", methods=["POST"])
+def redirect_run():
+    data = request.json or {}
+    feedback = str(data.get("feedback", "")).strip()
+    if not feedback:
+        return jsonify({"ok": False, "error": "feedback is required"}), 400
+    engine.redirect(feedback)
+    return jsonify({"ok": True, "message": "Redirection queued for dynamic replanning."})
 
 
 @app.route("/api/workspace/files", methods=["GET"])

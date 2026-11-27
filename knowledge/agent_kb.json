@@ -1,0 +1,42 @@
+[
+  {
+    "id": "kb-arch-001",
+    "category": "architecture",
+    "content": "Local Agent uses a multi-agent loop coordinated by AgentEngine (core/engine.py): PromptClassifier routes DIRECT vs PLAN, PlannerAgent decomposes tasks into a dependency DAG (depends_on) and replans on failures, ExecutorAgent runs scoped tool calls with scratchpad context, and CriticAgent verifies completion with read-only tools."
+  },
+  {
+    "id": "kb-safety-002",
+    "category": "architecture",
+    "content": "Workspace safety controls: read_file, read_file_lines, stat_file, list_dir, and edit_file_lines are strictly confined to configured workspace_roots via Path boundary checks. write_file strips directory traversal and writes strictly inside output_dir. run_command enforces blocked_commands (rm -rf, mkfs, dd if=), 30s timeout, and 4000-char output cap."
+  },
+  {
+    "id": "kb-hitl-003",
+    "category": "architecture",
+    "content": "Human-in-the-Loop (HITL) safety modes: Safe mode auto-runs reads and pauses on write_file, edit_file_lines, run_command, and plan_approval_required; Auto mode executes without prompts except ask_user and hard safety blocks; Strict mode requires approval for every tool call."
+  },
+  {
+    "id": "kb-rag-004",
+    "category": "architecture",
+    "content": "Local Long-Term Memory RAG (core/memory/store.py) persists discoveries, architecture notes, and solution summaries in local SQLite (data/memory/memory.db) using hybrid BM25 keyword ranking plus cosine similarity from Ollama nomic-embed-text or hashed character-trigram embeddings."
+  },
+  {
+    "id": "kb-providers-005",
+    "category": "architecture",
+    "content": "Unified BaseProvider supports four backends: local Ollama (/api/chat, /api/tags), OpenAI-compatible LM Studio (/v1), Google Gemini (:streamGenerateContent?alt=sse with functionDeclarations), and NVIDIA NIM (integrate.api.nvidia.com/v1 with rate pacing and 429/503 exponential backoff)."
+  },
+  {
+    "id": "kb-workflow-006",
+    "category": "discovery",
+    "content": "Best practice for file edits in Local Agent: always call stat_file before read_file_lines to inspect file size and line count, inspect target lines before edit_file_lines, and store verified data schemas or numeric facts via update_scratchpad so downstream subtasks avoid hallucinations."
+  },
+  {
+    "id": "kb-debug-007",
+    "category": "discovery",
+    "content": "When verifying Python modules written via write_file, remember that write_file places files inside output_dir (typically ./output relative to workspace root), so verification commands via run_command should execute inside output_dir or set PYTHONPATH to output_dir."
+  },
+  {
+    "id": "kb-troubleshooting-008",
+    "category": "solution",
+    "content": "If Ollama returns connection refused at 127.0.0.1:11434, run `ollama serve` or launch Ollama.app. If NVIDIA NIM returns HTTP 410 Gone, switch to an active model such as nvidia/nemotron-3-ultra-550b-a55b in Settings."
+  }
+]

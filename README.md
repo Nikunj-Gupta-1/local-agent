@@ -1,6 +1,6 @@
-# Local Agent Desktop App
+# Local Agent
 
-A powerful local autonomous coding agent equipped with a modern macOS desktop interface styled like Google Antigravity and OpenAI Codex, a 2-tier prompt intent classifier, multi-provider AI support (Google Gemini, NVIDIA NIM, Ollama, LM Studio, OpenAI-compatible), and 100% local Long-Term Agent Memory RAG.
+A privacy-preserving autonomous coding and workspace assistant equipped with a native macOS CustomTkinter desktop app, an optional Flask SSE Web UI, a terminal CLI, a 3-agent collaborative orchestration loop (`PlannerAgent`, `ExecutorAgent`, `CriticAgent`), hybrid BM25 + vector Long-Term Memory RAG, and multi-provider AI support (Ollama, Google Gemini, NVIDIA NIM, LM Studio / OpenAI-compatible).
 
 ![System Architecture Diagram](architecture_diagram.jpg)
 
@@ -8,58 +8,70 @@ A powerful local autonomous coding agent equipped with a modern macOS desktop in
 
 ## Highlights
 
-* **Native Desktop & Web GUI**:
-  * **Native macOS Desktop App (`gui/app.py`)**: Standalone CustomTkinter desktop interface with dark obsidian palette, rounded cards, live task plan checklists, and zero browser dependency.
-  * **Web Interface (`server/api.py`)**: Optional browser/app-mode UI (`--web`) powered by Flask and Server-Sent Events (SSE) with translucent frosted glass and collapsible thinking token traces.
-* **2-Tier Prompt Intent Classifier (`core/classifier.py`)**: Automatically distinguishes between direct conversational/Q&A requests (`DIRECT`, using a 0ms regex fast-path + lightweight LLM fallback) and complex engineering tasks that require multi-step autonomous planning (`PLAN`).
-* **Multi-Provider AI Sources**:
-  * **Google Gemini API**: Native function calling, streaming, and models (`gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.5-flash-lite`).
-  * **NVIDIA NIM**: Free tier cloud models with automated rate pacing and exponential backoff.
-  * **Local / Remote Ollama**: Gemma 4, DeepSeek-R1, Llama 3, and local models via `http://localhost:11434`.
-  * **LM Studio & Local AI**: Universal OpenAI-compatible endpoint support (`http://localhost:1234/v1`, vLLM, Jan, LocalAI, OpenRouter, Groq).
-* **AI Source Setup Screen**: Dedicated GUI settings modal to configure API keys, endpoints, execution modes, and test connections with real-time feedback.
-* **Long-Term Agent Memory RAG**: In-process local SQLite vector & hybrid keyword store that remembers past project decisions, bug fixes, and architectural notes across sessions with auto-injection and on-demand recall.
-* **Human-in-the-Loop Safety Controls**:
-  * **Safe Mode**: Reads auto-run; shell commands and file mutations display an interactive **[Authorize]** / **[Reject]** prompt.
-  * **Auto Mode**: Autonomous execution for trusted workflows.
-  * **Strict Mode**: Requires approval for every tool execution.
-  * **Interrupt Button**: Instantly pause the agent and submit a redirection prompt.
+* **Multi-Agent Collaborative Architecture (`core/agents/`)**:
+  * **`PlannerAgent` (`core/agents/planner_agent.py`)**: Uses read-only discovery tools and `ask_user` to detect ambiguities, builds a dependency-linked subtask DAG (`depends_on`), and dynamically replans when tasks fail or user requirements change.
+  * **`ExecutorAgent` (`core/agents/executor_agent.py`)**: Runs scoped tool-calling loops (`TOOLS_SCHEMA`), records verified tool evidence into `output/scratchpad.md`, and submits structured `ExecutionReport`s.
+  * **`CriticAgent` (`core/agents/critic_agent.py`)**: Independently inspects workspace artifacts with read-only tools and returns structured verdicts (`satisfied`, `next_action`, `needs_replan`) driving retries or dynamic replanning over `CollaborationBus` (`core/agents/bus.py`).
+* **2-Tier Prompt Intent Classifier (`core/classifier.py`)**: Routes conversational/Q&A requests (`DIRECT`) in `<1 ms` via Tier-1 regex matching and reserves multi-agent decomposition (`PLAN`) for complex engineering tasks via regex + Tier-2 LLM classification.
+* **Local Hybrid BM25 + Vector RAG (`core/memory/`)**: SQLite store (`data/memory/memory.db`) seeded with `knowledge/agent_kb.json`, combining Okapi BM25 ranking with Ollama `nomic-embed-text` embeddings (and a pure-Python hashed trigram vector fallback), injecting cited `[MEM-...]` context and harvesting session knowledge automatically.
+* **Human-in-the-Loop (HITL) Governance**:
+  * **Pre-Execution Plan Review**: Inspect, approve, revise with feedback, or cancel generated plans before execution in `Safe`/`Strict` modes.
+  * **Tool Authorization Gate**: `Safe` (reads auto-run; writes/edits/shell require `[Authorize]`/`[Reject]` + optional feedback), `Auto`, and `Strict` modes.
+  * **Interactive Clarification & Mid-Run Redirect**: `ask_user` pauses for user answers; **Interrupt** supports halting or supplying dynamic redirection instructions.
+* **Multi-Provider AI Support**: Unified `BaseProvider` covering **Ollama**, **Google Gemini**, **NVIDIA NIM**, and **LM Studio / OpenAI-compatible** `/v1` endpoints.
+* **Native Desktop, Web & CLI Interfaces**:
+  * **Native Desktop GUI (`gui/app.py`)**: Standalone CustomTkinter window (`python3 run_app.py`).
+  * **Web Interface (`server/api.py`)**: Flask REST + SSE UI at `http://127.0.0.1:5000` (`python3 run_app.py --web`).
+  * **CLI (`agent.py`)**: Terminal mode (`python3 agent.py`).
 
 ---
 
-## Quick Start
+## Installation & Setup
 
-### 1. Launch the Native Desktop Application
-
-Run the launcher from your terminal:
+### 1. Clone & Install Dependencies
 ```bash
-./run_app.py
-```
-Or with Python:
-```bash
-python3 run_app.py
-```
-This opens the standalone native macOS desktop window.
-
-To launch the browser-based Web UI at `http://127.0.0.1:5000` instead:
-```bash
-python3 run_app.py --web
+git clone https://github.com/Nikunj-Gupta-1/local-agent.git
+cd local-agent
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. Configure Your AI Sources
-
-Click the **Settings (⚙)** button in the top right to configure:
-* **Google Gemini**: Paste your Gemini API key and click **Test Connection**.
-* **NVIDIA NIM**: Paste your NVIDIA Developer API key.
-* **Ollama**: Default `http://127.0.0.1:11434`.
-* **LM Studio**: Default `http://localhost:1234/v1`.
-
-### 3. CLI Mode (Optional)
-
-If you wish to run in the terminal only:
+### 2. Configure Your Workspace & Provider
+Copy the example config (never commit `config.yaml` or API keys):
 ```bash
-python3 agent.py
+cp config.yaml.example config.yaml
 ```
+Edit `config.yaml` to set `workspace_roots`, `output_dir`, `log_dir`, and your model/API settings (or configure providers directly inside the GUI **Settings (⚙)** modal).
+
+For local inference with Ollama:
+```bash
+ollama serve
+ollama pull gemma4-e4b-64k:latest   # or any local tool-capable model
+```
+
+---
+
+## Quick Start & Reproducing Demonstrations
+
+* **Launch Native Desktop App (default):**
+  ```bash
+  ./venv/bin/python run_app.py
+  ```
+* **Launch Web UI (`http://127.0.0.1:5000`):**
+  ```bash
+  ./venv/bin/python run_app.py --web
+  ```
+* **Launch Terminal CLI:**
+  ```bash
+  ./venv/bin/python agent.py
+  ```
+
+### Suggested Demonstration Prompts
+1. **Direct Fast-Path:** `"tell me how i can multiply 2 matrices"` → routes to `DIRECT` in `<1 ms` with zero planner overhead.
+2. **Multi-Agent Planning & HITL:** `"build a python calculator module with tests"` in **Safe** mode → shows `PlannerAgent` DAG, Pre-Execution Plan Review gate, `ExecutorAgent` tool approval cards, `CriticAgent` verification verdicts, and inter-agent messages.
+3. **Clarification (`ask_user`):** `"export a summary report from workspace data"` → agent pauses to confirm format/filename before writing.
+4. **Local RAG Recall:** Open the **Memory** window to inspect seeded/harvested entries and ask `"what safety boundaries does Local Agent enforce?"` to observe `[MEM-...]` citation injection.
 
 ---
 
@@ -69,44 +81,39 @@ python3 agent.py
 local-agent/
 ├── run_app.py                 ← Desktop & Web app launcher (--web for web mode)
 ├── agent.py                   ← Classic CLI agent
-├── config.yaml.example        ← Example configuration settings
+├── requirements.txt           ← Python dependencies
+├── config.yaml.example        ← Safe template configuration (no secrets)
 ├── architecture_diagram.jpg   ← High-resolution system architecture diagram
-├── gui/
-│   └── app.py                 ← Standalone native macOS desktop GUI (CustomTkinter)
+├── knowledge/
+│   └── agent_kb.json          ← Curated seed RAG knowledge base
 ├── core/
-│   ├── engine.py              ← Decoupled streaming agent execution loop
+│   ├── engine.py              ← Multi-agent event-streaming orchestrator
 │   ├── classifier.py          ← 2-tier prompt intent classifier (DIRECT vs PLAN)
-│   ├── planner.py             ← Autonomous task planner pass
-│   ├── evaluator.py           ← Satisfaction evaluator
-│   ├── scratchpad.py          ← Persistent scratchpad manager
-│   ├── tools_schema.py        ← Function schemas for all tools
+│   ├── planner.py             ← Planner facade delegating to PlannerAgent
+│   ├── evaluator.py           ← Evaluator facade delegating to CriticAgent
+│   ├── scratchpad.py          ← Persistent scratchpad & verified evidence state
+│   ├── tools_schema.py        ← JSON schemas for 12 tools
+│   ├── agents/
+│   │   ├── bus.py             ← Inter-agent CollaborationBus & AgentMessage
+│   │   ├── planner_agent.py   ← Discovery, DAG planning & dynamic replanning
+│   │   ├── executor_agent.py  ← Tool-using execution specialist
+│   │   └── critic_agent.py    ← Read-only verification & retry/replan critic
 │   ├── memory/
-│   │   ├── store.py           ← SQLite vector & hybrid semantic memory
+│   │   ├── store.py           ← SQLite hybrid BM25 + vector store
 │   │   ├── indexer.py         ← Session memory harvester
-│   │   └── hook.py            ← Context injection hook
-│   └── providers/
-│       ├── base.py            ← Abstract BaseProvider interface
-│       ├── gemini_provider.py
-│       ├── nvidia_provider.py
-│       ├── ollama_provider.py
-│       └── openai_compatible_provider.py
-├── server/
-│   ├── api.py                 ← Flask REST API & Server-Sent Events (SSE) server
-│   └── static/
-│       ├── index.html         ← macOS Antigravity/Codex web UI
-│       ├── style.css          ← Design tokens, curves, glassmorphism
-│       └── app.js             ← Streaming client & state management
-├── tools/                     ← Filesystem, shell, editing, notify, memory tools
-├── prompts/                   ← System prompt templates
-├── tests/                     ← Unit test suite (15 passing tests)
-└── output/                    ← Target directory for created files
+│   │   └── hook.py            ← Cited [MEM-...] context injection hook
+│   └── providers/             ← BaseProvider, Ollama, Gemini, NVIDIA NIM, OpenAI
+├── gui/app.py                 ← Standalone native macOS desktop GUI
+├── server/                    ← Flask REST/SSE backend & web frontend
+├── tools/                     ← Workspace-guarded file, edit, shell, notify, RAG tools
+├── prompts/system.txt         ← Dynamic system prompt template
+└── tests/                     ← Automated unit & integration tests
 ```
 
 ---
 
 ## Running Automated Tests
 
-Run the unit test suite (15 tests covering classifier, engine, memory RAG, providers, and server):
 ```bash
 ./venv/bin/python -m unittest discover tests -v
 ```

@@ -80,6 +80,8 @@ class NvidiaProvider(BaseProvider):
             "max_tokens": 8192,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
 
         # Pacing for NVIDIA NIM Free Tier
         if self.pace_delay > 0:

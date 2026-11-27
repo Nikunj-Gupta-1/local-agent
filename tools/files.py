@@ -20,7 +20,8 @@ def _is_allowed(path: str, roots: list[str]) -> bool:
     """Return True only if path is inside one of the allowed workspace roots."""
     target = _resolve(path)
     for root in roots:
-        if str(target).startswith(str(_resolve(root))):
+        root_path = _resolve(root)
+        if target == root_path or root_path in target.parents:
             return True
     return False
 

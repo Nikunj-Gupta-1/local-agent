@@ -368,14 +368,80 @@ function handleAgentEvent(event, container, refs) {
     }
   }
 
+  // 3b. Plan Approval Required (Pre-Execution HITL)
+  else if (type === "plan_approval_required") {
+    const gate = document.createElement("div");
+    gate.className = "tool-card";
+    gate.innerHTML = `
+      <div class="tool-card-header">
+        <span class="tool-name-badge"><span>🧭</span><span>Plan Review Required</span></span>
+        <span style="color: var(--accent-yellow); font-size: 11.5px; font-weight: 500;">Human-in-the-Loop Gate</span>
+      </div>
+      <div class="tool-card-body">
+        <input type="text" class="config-input" id="plan-fb-${event.action_id}" placeholder="Optional feedback to refine plan..." style="width: 100%; margin-bottom: 8px;">
+        <div class="tool-approval-actions">
+          <button class="btn-authorize" id="plan-ok-${event.action_id}">Approve & Execute</button>
+          <button class="btn-reject" id="plan-mod-${event.action_id}">Revise / Cancel</button>
+        </div>
+      </div>
+    `;
+    container.appendChild(gate);
+    scrollToBottom();
+
+    document.getElementById(`plan-ok-${event.action_id}`).addEventListener("click", () => {
+      const fb = document.getElementById(`plan-fb-${event.action_id}`).value.trim();
+      respondToAction(event.action_id, true, "", fb);
+      gate.querySelector(".tool-card-body").innerHTML = `<span style="color: var(--accent-green); font-size: 12px; font-weight: 600;">✓ Plan Approved${fb ? " (with feedback)" : ""}</span>`;
+    });
+
+    document.getElementById(`plan-mod-${event.action_id}`).addEventListener("click", () => {
+      const fb = document.getElementById(`plan-fb-${event.action_id}`).value.trim();
+      respondToAction(event.action_id, false, "", fb);
+      gate.querySelector(".tool-card-body").innerHTML = `<span style="color: var(--accent-yellow); font-size: 12px; font-weight: 600;">${fb ? "↻ Replanning with feedback..." : "✗ Plan Cancelled"}</span>`;
+    });
+  }
+
+  // 3c. Plan Updated (Dynamic Replan)
+  else if (type === "plan_updated") {
+    const pCard = refs.getPlanCard();
+    if (pCard) {
+      const list = pCard.querySelector("#subtaskList");
+      if (list) {
+        list.innerHTML = "";
+        (event.subtasks || []).forEach((st) => {
+          const row = document.createElement("div");
+          row.className = st.done ? "subtask-row done" : "subtask-row";
+          row.id = `subtask-${st.id}`;
+          row.innerHTML = `<span>${st.done ? "✓" : "○"}</span><span>[${st.id}] ${escapeHtml(st.title)}</span>`;
+          list.appendChild(row);
+        });
+      }
+    }
+    const note = document.createElement("div");
+    note.className = "memory-recall-banner";
+    note.innerHTML = `<span>🔄</span><span>Plan adapted: ${escapeHtml(event.reason || "Updated subtasks")}</span>`;
+    container.appendChild(note);
+    updateScratchpadView(event.subtasks);
+    scrollToBottom();
+  }
+
+  // 3d. Inter-Agent Collaboration Message
+  else if (type === "agent_message") {
+    const msgEl = document.createElement("div");
+    msgEl.style.cssText = "font-size: 11.5px; color: var(--text-muted); padding: 4px 10px; border-left: 2px solid var(--accent-cyan); margin: 3px 0;";
+    msgEl.innerHTML = `<strong>${escapeHtml(event.sender)} → ${escapeHtml(event.recipient)}</strong> <span style="opacity:0.7">[${escapeHtml(event.message_type)}]</span>: ${escapeHtml(event.summary)}`;
+    container.appendChild(msgEl);
+    scrollToBottom();
+  }
+
   // 4. Subtask evaluated
   else if (type === "subtask_evaluated") {
     const pCard = refs.getPlanCard();
     if (pCard) {
       const row = pCard.querySelector(`#subtask-${event.subtask_id}`);
       if (row) {
-        row.className = "subtask-row done";
-        row.querySelector("span").textContent = "✓";
+        row.className = event.satisfied ? "subtask-row done" : "subtask-row";
+        row.querySelector("span").textContent = event.satisfied ? "✓" : "↻";
       }
     }
   }
@@ -514,11 +580,11 @@ function handleAgentEvent(event, container, refs) {
   }
 }
 
-async function respondToAction(actionId, approved, answer = "") {
+async function respondToAction(actionId, approved, answer = "", feedback = "") {
   await fetch("/api/action/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action_id: actionId, approved, answer }),
+    body: JSON.stringify({ action_id: actionId, approved, answer, feedback }),
   });
 }
 

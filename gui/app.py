@@ -241,6 +241,9 @@ class SettingsDialog(ctk.CTkToplevel):
         cfg["nvidia_api_key"] = self.nvidia_key_entry.get().strip()
         cfg["nvidia_model"] = self.nvidia_model_entry.get().strip()
         cfg["ollama_url"] = self.ollama_url_entry.get().strip()
+        ollama_m = self.ollama_model_entry.get().strip()
+        if ollama_m and cfg.get("provider", "ollama") == "ollama":
+            cfg["model"] = ollama_m
         cfg["openai_base_url"] = self.lm_url_entry.get().strip()
         cfg["lm_model"] = self.lm_model_entry.get().strip()
         save_config(cfg)
@@ -624,8 +627,17 @@ class LocalAgentApp(ctk.CTk):
         ctk.CTkLabel(self.empty_frame, text="Ask the agent any question or start a new engineering task.", font=FONT_SANS, text_color=CLR_TEXT_MUTED).pack(padx=24, pady=(0, 20))
 
     def _interrupt_agent(self):
-        self.engine.interrupt()
-        self.stop_btn.pack_forget()
+        from tkinter import simpledialog
+        fb = simpledialog.askstring(
+            "Interrupt / Redirect Agent",
+            "Enter redirection instructions for dynamic replanning (leave empty to stop execution):",
+            parent=self,
+        )
+        if fb and fb.strip():
+            self.engine.redirect(fb.strip())
+        else:
+            self.engine.interrupt()
+            self.stop_btn.pack_forget()
 
     def _send_prompt(self):
         text = self.input_entry.get("1.0", "end").strip()
@@ -686,6 +698,33 @@ class LocalAgentApp(ctk.CTk):
                 subtasks = event.get("subtasks", [])
                 complexity = event.get("complexity", "medium")
                 self.after(0, self._render_plan_card, container, subtasks, complexity)
+
+            # 5b. Plan approval required (HITL)
+            elif ev_type == "plan_approval_required":
+                action_id = event.get("action_id")
+                subtasks = event.get("subtasks", [])
+                self.after(0, self._render_plan_approval_card, container, action_id, subtasks)
+
+            # 5c. Plan updated (Dynamic Replan)
+            elif ev_type == "plan_updated":
+                subtasks = event.get("subtasks", [])
+                reason = event.get("reason", "Adapted plan")
+                self.after(0, self._render_plan_updated_card, container, subtasks, reason)
+
+            # 5d. Inter-agent message
+            elif ev_type == "agent_message":
+                sender = event.get("sender", "")
+                recipient = event.get("recipient", "")
+                msg_type = event.get("message_type", "")
+                summary = event.get("summary", "")
+                self.after(0, self._render_agent_msg_card, container, sender, recipient, msg_type, summary)
+
+            # 5e. Subtask evaluated
+            elif ev_type == "subtask_evaluated":
+                sid = event.get("subtask_id")
+                satisfied = event.get("satisfied", True)
+                reason = event.get("reason", "")
+                self.after(0, self._render_eval_card, container, sid, satisfied, reason)
 
             # 6. Thinking token
             elif ev_type == "thinking":
@@ -784,18 +823,82 @@ class LocalAgentApp(ctk.CTk):
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=12, pady=(6, 10))
 
+        fb_entry = ctk.CTkEntry(card, font=FONT_SANS, placeholder_text="Optional modification / rejection feedback...", fg_color=CLR_INPUT, border_color=CLR_BORDER)
+        fb_entry.pack(fill="x", padx=12, pady=(0, 6))
+
         def on_auth():
             self.engine.submit_user_response(action_id, {"approved": True})
             btn_row.destroy()
+            fb_entry.destroy()
             ctk.CTkLabel(card, text="✓ Action Authorized", font=FONT_SANS_BOLD, text_color=CLR_GREEN).pack(padx=12, pady=4)
 
         def on_rej():
-            self.engine.submit_user_response(action_id, {"approved": False})
+            fb = fb_entry.get().strip()
+            self.engine.submit_user_response(action_id, {"approved": False, "feedback": fb})
             btn_row.destroy()
-            ctk.CTkLabel(card, text="✗ Action Rejected", font=FONT_SANS_BOLD, text_color=CLR_RED).pack(padx=12, pady=4)
+            fb_entry.destroy()
+            ctk.CTkLabel(card, text=f"✗ Action Rejected{': ' + fb if fb else ''}", font=FONT_SANS_BOLD, text_color=CLR_RED).pack(padx=12, pady=4)
 
         ctk.CTkButton(btn_row, text="Authorize", width=90, height=26, corner_radius=8, fg_color=CLR_GREEN, hover_color="#059669", text_color="#000", command=on_auth).pack(side="left", padx=4)
         ctk.CTkButton(btn_row, text="Reject", width=80, height=26, corner_radius=8, fg_color=CLR_RED, hover_color="#dc2626", command=on_rej).pack(side="left", padx=4)
+
+    def _render_plan_approval_card(self, container, action_id, subtasks):
+        card = ctk.CTkFrame(container, fg_color=CLR_SURFACE, corner_radius=12, border_width=1, border_color=CLR_CYAN)
+        card.pack(fill="x", padx=14, pady=6)
+        ctk.CTkLabel(card, text=f"🧭 Plan Review ({len(subtasks)} steps) — Approve or Provide Feedback", font=FONT_SANS_BOLD, text_color=CLR_CYAN).pack(anchor="w", padx=12, pady=(8, 4))
+        fb_entry = ctk.CTkEntry(card, font=FONT_SANS, placeholder_text="Optional feedback to revise the plan...", fg_color=CLR_INPUT, border_color=CLR_BORDER)
+        fb_entry.pack(fill="x", padx=12, pady=4)
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(4, 10))
+
+        def on_approve():
+            fb = fb_entry.get().strip()
+            self.engine.submit_user_response(action_id, {"approved": True, "feedback": fb})
+            btn_row.destroy()
+            fb_entry.destroy()
+            ctk.CTkLabel(card, text="✓ Plan Approved", font=FONT_SANS_BOLD, text_color=CLR_GREEN).pack(padx=12, pady=4)
+
+        def on_revise_or_cancel():
+            fb = fb_entry.get().strip()
+            self.engine.submit_user_response(action_id, {"approved": False, "feedback": fb})
+            btn_row.destroy()
+            fb_entry.destroy()
+            ctk.CTkLabel(card, text="↻ Replanning with feedback..." if fb else "✗ Plan Cancelled", font=FONT_SANS_BOLD, text_color=CLR_AMBER if fb else CLR_RED).pack(padx=12, pady=4)
+
+        ctk.CTkButton(btn_row, text="Approve Plan", width=110, height=26, corner_radius=8, fg_color=CLR_GREEN, text_color="#000", command=on_approve).pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="Revise / Cancel", width=115, height=26, corner_radius=8, fg_color=CLR_AMBER, text_color="#000", command=on_revise_or_cancel).pack(side="left", padx=4)
+
+    def _render_plan_updated_card(self, container, subtasks, reason):
+        p_frame = ctk.CTkFrame(container, fg_color=CLR_SURFACE, corner_radius=12, border_width=1, border_color=CLR_PURPLE)
+        p_frame.pack(fill="x", padx=14, pady=6)
+        ctk.CTkLabel(p_frame, text=f"🔄 Adapted Plan: {reason}", font=FONT_SANS_BOLD, text_color=CLR_PURPLE, wraplength=640, justify="left").pack(anchor="w", padx=12, pady=(8, 4))
+        for st in subtasks:
+            mark = "✓" if st.get("done") else "○"
+            ctk.CTkLabel(p_frame, text=f"{mark} [{st['id']}] {st['title']}", font=FONT_MONO_SMALL, text_color=CLR_TEXT_MUTED).pack(anchor="w", padx=16, pady=2)
+
+    def _render_agent_msg_card(self, container, sender, recipient, msg_type, summary):
+        lbl = ctk.CTkLabel(
+            container,
+            text=f"🤝 {sender} → {recipient} [{msg_type}]: {summary}",
+            font=FONT_MONO_SMALL,
+            text_color=CLR_CYAN,
+            wraplength=680,
+            justify="left",
+        )
+        lbl.pack(anchor="w", padx=16, pady=2)
+
+    def _render_eval_card(self, container, sid, satisfied, reason):
+        col = CLR_GREEN if satisfied else CLR_AMBER
+        icon = "✓" if satisfied else "↻"
+        lbl = ctk.CTkLabel(
+            container,
+            text=f"{icon} CriticAgent [{sid}]: {reason}",
+            font=FONT_MONO_SMALL,
+            text_color=col,
+            wraplength=680,
+            justify="left",
+        )
+        lbl.pack(anchor="w", padx=16, pady=2)
 
     def _render_ask_user_card(self, container, action_id, question):
         card = ctk.CTkFrame(container, fg_color=CLR_SURFACE, corner_radius=12, border_width=1, border_color=CLR_CYAN)
